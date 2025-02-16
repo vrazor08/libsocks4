@@ -137,50 +137,6 @@ int handle_cons(struct socks4_server* server) {
         break;
       case WRITE_TO_CLIENT_AFTER_CONNECT:
         client_fd = req->client_fd;
-        // switch (req->from_state) {
-        //   case CONNECT:
-        //     new_req = (client_t*)malloc(sizeof(client_t));
-        //     new_req->client_fd = client_fd;
-        //     new_req->client_proxing_fd = req->client_proxing_fd;
-        //     new_req->recv_buf = recv_buf;
-        //     new_req->recv_len = BUF_SIZE;
-        //     new_req->state = READ_FROM_CLIENT;
-        //     add_recv_req(client_fd, new_req, &server->ring);
-
-        //     new_req2 = (client_t*)malloc(sizeof(client_t));
-        //     new_req2->client_fd = client_fd;
-        //     new_req2->client_proxing_fd = req->client_proxing_fd;
-        //     new_req2->recv_buf = recv_buf;
-        //     new_req2->recv_len = BUF_SIZE;
-        //     new_req2->state = READ_FROM_CLIENT_PROXING;
-        //     add_recv_req(req->client_proxing_fd, new_req2, &server->ring);
-
-        //     puts(log_msg"WRITE_TO_CLIENT req from CONNECT req");
-        //     break;
-        //   case READ_FROM_CLIENT:
-        //     new_req = (client_t*)malloc(sizeof(client_t));
-        //     new_req->client_fd = client_fd;
-        //     new_req->client_proxing_fd = req->client_proxing_fd;
-        //     new_req->recv_buf = recv_buf;
-        //     new_req->recv_len = BUF_SIZE;
-        //     new_req->state = READ_FROM_CLIENT;
-        //     add_recv_req(client_fd, new_req, &server->ring);
-        //     puts(log_msg"WRITE_TO_CLIENT req from READ_FROM_CLIENT req");
-        //     break;
-        //   case READ_FROM_CLIENT_PROXING:
-        //     new_req2 = (client_t*)malloc(sizeof(client_t));
-        //     new_req2->client_fd = client_fd;
-        //     new_req2->client_proxing_fd = req->client_proxing_fd;
-        //     new_req2->recv_buf = recv_buf;
-        //     new_req2->recv_len = BUF_SIZE;
-        //     new_req2->state = READ_FROM_CLIENT_PROXING;
-        //     add_recv_req(req->client_proxing_fd, new_req2, &server->ring);
-        //     puts(log_msg"WRITE_TO_CLIENT req from READ_FROM_CLIENT_PROXING req");
-        //     break;
-        //   default:
-        //     printf("get from: %d\n", req->from_state);
-        //     goto end_with_err;
-        // }
         new_req = (client_t*)malloc(sizeof(client_t));
         new_req->client_fd = client_fd;
         new_req->client_proxing_fd = req->client_proxing_fd;
@@ -237,13 +193,6 @@ int handle_cons(struct socks4_server* server) {
         new_req->recv_len = BUF_SIZE;
         new_req->state = READ_FROM_CLIENT;
         add_recv_req(client_fd, new_req, &server->ring);
-        // new_req = (client_t*)malloc(sizeof(client_t));
-        // new_req->recv_buf = proxy_to_recv_buf;
-        // new_req->recv_len = BUF_SIZE;
-        // new_req->client_fd = req->client_fd;
-        // new_req->client_proxing_fd = req->client_proxing_fd;
-        // new_req->state = READ_FROM_CLIENT_PROXING;
-        // add_recv_req(req->client_proxing_fd, new_req, &server->ring);
         puts(log_msg"WRITE_TO_CLIENT_PROXING");
         free(req);
         break;
