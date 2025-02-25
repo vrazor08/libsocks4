@@ -10,7 +10,7 @@
 
 void add_accept_req(int fd,
   struct sockaddr_in *client_addr,
-  socklen_t *addr_len,
+  socklen_t addr_len,
   struct io_uring *ring
 );
 

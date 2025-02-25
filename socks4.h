@@ -9,7 +9,7 @@
 #define SOCKS4_CONNECT_COMMAD 1
 #define SOCKS4_BIND_COMMAND 2
 #define QUEUE_DEPTH 256
-#define BUF_SIZE 4096
+#define BUF_SIZE 16384
 
 #define ANTOHS(data, i) \
   (((uint16_t)data[i] << 8) + (uint8_t)data[i + 1])
@@ -26,6 +26,7 @@ typedef enum {
   READ_FROM_CLIENT,
   READ_FROM_CLIENT_PROXING,
   FIRST_READ,
+  WRITE_ERR_TO_CLIENT,
   WRITE_TO_CLIENT,
   WRITE_TO_CLIENT_AFTER_CONNECT,
   WRITE_TO_CLIENT_PROXING,
@@ -55,6 +56,5 @@ typedef struct {
 
 int setup_listening_socket(struct socks4_server* server);
 int handle_cons(struct socks4_server* server);
-// int connect_to_dst(struct socks4_server* server, client_t* req, struct sockaddr_in* client_dst);
 
 #endif

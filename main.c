@@ -1,4 +1,3 @@
-// gcc -Wall -Wextra -O2 main.c socks4.c uring_helpers.c -o socks4 -luring
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -29,7 +28,7 @@ int main(void) {
   server.server_fd = fd;
   if (setup_listening_socket(&server) != 0) return 1;
   if (handle_cons(&server) != 0) { close(server.server_fd); return 1; }
-  close(server.server_fd);
   io_uring_queue_exit(&server.ring);
+  close(server.server_fd);
   return 0;
 }
