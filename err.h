@@ -17,4 +17,11 @@
   close((fd)); \
   bail(msg) \
   } while(0);
+
+#ifdef SOCKS_DEBUG
+#define dbg(print) do { print; } while (0)
+#else
+#define dbg(print) do {} while (0)
+#endif
+
 #endif

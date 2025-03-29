@@ -8,12 +8,14 @@
 #include <unistd.h>
 
 #include "socks4.h"
+#include "err.h"
 
 const char* host = "127.0.0.2";
 #define PORT 6969
 
 int main(void) {
-  printf("starting on: %s:%d\n", host, PORT);
+  printf(log_msg"starting on: %s:%d\n", host, PORT);
+  dbg(puts(log_msg"debug mode is enable"));
   struct socks4_server server;
   struct sockaddr_in addr;
   struct timeval recv_timeout = { .tv_sec = 2, .tv_usec = 0};

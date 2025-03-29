@@ -1,0 +1,11 @@
+[package]
+name = "bench"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+strip = true
+debug-assertions = false
+
+[dependencies]
+tokio = { version="1.43.0", features = ["net", "rt", "rt-multi-thread", "io-util", "macros"] }
