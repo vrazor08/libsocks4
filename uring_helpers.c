@@ -8,33 +8,26 @@
 #include "uring_helpers.h"
 #include "socks4.h"
 
-void add_accept_req(int fd,
-  socklen_t *addr_len,
-  struct io_uring *ring
-) {
+void add_accept_req(int fd, socklen_t *addr_len, struct io_uring *ring) {
   struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
   struct sockaddr_in *client_addr = malloc(sizeof(struct sockaddr_in));
   io_uring_prep_accept(sqe, fd, (struct sockaddr*)client_addr, addr_len, 0);
   client_t *req = malloc(sizeof(client_t));
+  req->send_buf = (char*)client_addr;
   req->state = ACCEPT;
   io_uring_sqe_set_data(sqe, (void*)req);
-
-  //io_uring_sqe_set_flags(sqe, 0);
-
   io_uring_submit(ring);
 }
 
-void add_connect_req(client_t *req, struct sockaddr_in* client_dst, socklen_t addr_len, struct io_uring* ring) {
+void add_connect_req(client_t *req, struct sockaddr_in *client_dst, socklen_t addr_len, struct io_uring *ring) {
   struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
   io_uring_prep_connect(sqe, req->client_proxing_fd, (struct sockaddr*)client_dst, addr_len);
-  io_uring_sqe_set_flags(sqe, 0);
   io_uring_sqe_set_data(sqe, (void*)req);
   io_uring_submit(ring);
 }
 
-void add_recv_req(int fd, client_t* req, struct io_uring* ring) {
+void add_recv_req(int fd, client_t *req, struct io_uring *ring) {
   struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-  //io_uring_prep_recv(sqe, fd, (void*)req->recv_buf, req->recv_len, 0);
   io_uring_prep_recv(sqe, fd, NULL, MAX_MESSAGE_LEN, 0);
   io_uring_sqe_set_flags(sqe, IOSQE_BUFFER_SELECT);
   sqe->buf_group = 0;
@@ -45,12 +38,7 @@ void add_recv_req(int fd, client_t* req, struct io_uring* ring) {
 
 int add_send_req(int fd, client_t *req, struct io_uring *ring) {
   struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-  //io_uring_prep_send(sqe, fd, req->send_buf, req->send_buf_len, 0);
-
   io_uring_prep_send(sqe, fd, req->send_buf, req->send_buf_len, 0);
-  io_uring_sqe_set_flags(sqe, 0);
-  //io_uring_sqe_set_flags(sqe, IOSQE_BUFFER_SELECT);
-
   io_uring_sqe_set_data(sqe, (void*)req);
   io_uring_submit(ring);
   return 0;
@@ -60,12 +48,9 @@ void add_provide_buf(struct io_uring *ring, char bufs[BUFFERS_COUNT][MAX_MESSAGE
   struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
   io_uring_prep_provide_buffers(sqe, bufs[bid], MAX_MESSAGE_LEN, 1, gid, bid);
   client_t *req = malloc(sizeof(client_t));
-  //client_t conn_i = {0};
   req->state = PROV_BUF;
   req->client_bid = bid;
   io_uring_sqe_set_data(sqe, (void*)req);
-  if (bufs[bid][0] == 2) { dbg(printf("try to provid buffer: bufs[%u] but that is already provided\n", bid));}
-  //memset(bufs[bid], 2, sizeof(bufs[bid]));
+  if (bufs[bid][0] == 2) { dbg(printf("try to provide buffer: bufs[%u] but that is already provided\n", bid));}
   io_uring_submit(ring);
-  //memcpy(&sqe->user_data, &conn_i, sizeof(conn_i));
 }

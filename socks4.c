@@ -42,8 +42,7 @@ static inline void prep_sockets(client_t *old_req, client_t *new_req) {
 
 int setup_listening_socket(struct socks4_server* server) {
   int fd = server->server_fd;
-  struct io_uring_params params;
-  memset(&params, 0, sizeof(params));
+  struct io_uring_params params = {0};
   int rv;
   if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) < 0) close_bail(fd, log_msg"SO_REUSEADDR");
   if (bind(fd, (struct sockaddr *)&server->server_addr, sizeof(server->server_addr)) == -1) close_bail(fd, log_msg"bind");
@@ -56,7 +55,7 @@ int setup_listening_socket(struct socks4_server* server) {
 	// params.flags |= IORING_SETUP_DEFER_TASKRUN;
 	// params.flags |= IORING_SETUP_COOP_TASKRUN;
   // rv = io_uring_queue_init(QUEUE_DEPTH, &server->ring, 0);
-  rv = io_uring_queue_init_params(2048, &server->ring, &params);
+  rv = io_uring_queue_init_params(QUEUE_DEPTH, &server->ring, &params);
   if (rv) {
     fprintf(stderr, "io_uring_queue_init_params: %s\n", strerror(-rv));
     close(fd);
@@ -102,15 +101,14 @@ int handle_client_req(char *buf, size_t buf_len, struct sockaddr_in *sin) {
 int handle_cons(struct socks4_server* server) {
   int fd = server->server_fd;
   client_t *req, *req_read_client, *req_read_client_proxing;
-  struct sockaddr_in client_addr;
-  socklen_t client_addr_len = sizeof(client_addr);
+  socklen_t client_addr_len = sizeof(struct sockaddr_in);
   add_accept_req(fd, &client_addr_len, &server->ring);
   for (;;) {
     int ret = io_uring_wait_cqe(&server->ring, &server->cqe);
     if (ret < 0) bail(log_msg"io_uring_wait_cqe");
     req = (client_t*)server->cqe->user_data;
     if (server->cqe->res < 0) {
-      // TODO: if for state we have fds - maybe close them and if we have bids maybe call add_provide_buf
+      // TODO: if for state we have fds - maybe close them. And if we have bids maybe call add_provide_buf
       fprintf(stderr, log_msg"%s for event: %s\n", strerror(-server->cqe->res), StateToStr[req->state]);
       fprintf(stderr, log_msg"-server->cqe->res=%d\n", -server->cqe->res);
       // close(req->client_fd);
@@ -123,15 +121,24 @@ int handle_cons(struct socks4_server* server) {
     switch (req->state) {
       case ACCEPT:
         req->client_fd = server->cqe->res;
+
+        #ifdef SOCKS_DEBUG
+        char client_ip_str[INET_ADDRSTRLEN];
+        struct sockaddr_in *client_addr = (struct sockaddr_in*)req->send_buf;
+        inet_ntop(AF_INET, &client_addr->sin_addr, client_ip_str, INET_ADDRSTRLEN);
+        printf(log_msg"Accepted connection from: %s:%u\n", client_ip_str, client_addr->sin_port);
+        #endif
+
+        free(req->send_buf);
         if (setsockopt(req->client_fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(int)) < 0) {
           fprintf(stderr, log_msg"error req->client_fd: %d\n", req->client_fd);
           perror(log_msg"TCP_NODELAY");
           close(req->client_fd);
           add_accept_req(fd, &client_addr_len, &server->ring);
+          free(req);
           break;
         }
         req_read_client = (client_t*)malloc(sizeof(client_t));
-        memset(req_read_client, 0, sizeof(client_t));
         req_read_client->client_fd = req->client_fd;
         req_read_client->state = FIRST_READ;
         add_recv_req(req->client_fd, req_read_client, &server->ring);
@@ -151,12 +158,8 @@ int handle_cons(struct socks4_server* server) {
         req_read_client->client_fd = req->client_fd;
         req_read_client->client_bid = server->cqe->flags >> 16;
         struct sockaddr_in *proxy_client_dst = malloc(client_addr_len);
+
         if (handle_client_req(bufs[server->cqe->flags >> 16], server->cqe->res, proxy_client_dst) == -1) {
-          #ifdef SOCKS_DEBUG
-          for (int i = 0; i < BUFFERS_COUNT; i++) {
-            if (bufs[i][0] == 4) printf(log_msg"bufs[%d] is socks4 connect req\n", i);
-          }
-          #endif
           req_read_client->state = WRITE_ERR_TO_CLIENT;
           req_read_client->send_buf = (char*)unsuccess_socks_ans;
           req_read_client->send_buf_len = sizeof(unsuccess_socks_ans);
@@ -164,14 +167,16 @@ int handle_cons(struct socks4_server* server) {
           // add_provide_buf(&server->ring, bufs, server->cqe->flags >> 16, group_id);
           fprintf(stderr, log_msg"handle_client_req == -1, server->cqe->flags >> 16 = %u\n", server->cqe->flags >> 16);
           free(req);
+          free(proxy_client_dst);
           break;
         }
+        req_read_client->send_buf = (char*)proxy_client_dst; // TODO: maybe add new field
         dbg(printf(log_msg"server->cqe->flags >> 16 = %u\n", server->cqe->flags >> 16));
         //add_provide_buf(&server->ring, bufs, server->cqe->flags >> 16, group_id);
         #ifdef SOCKS_DEBUG
         char dst_ip_str[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &proxy_client_dst->sin_addr, dst_ip_str, INET_ADDRSTRLEN);
-        printf(log_msg"Connect to dst: %s:%d\n", dst_ip_str, proxy_client_dst->sin_port);
+        printf(log_msg"Connect to dst: %s:%u\n", dst_ip_str, proxy_client_dst->sin_port);
         #endif
         server->state = con_to_dst;
         int con_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -182,7 +187,6 @@ int handle_cons(struct socks4_server* server) {
         req_read_client->state = CONNECT;
         add_connect_req(req_read_client, proxy_client_dst, sizeof(*proxy_client_dst), &server->ring);
         //add_provide_buf(&server->ring, bufs, server->cqe->flags >> 16, group_id);
-        //free(req->recv_buf); // @bad
         free(req);
         break;
       case CONNECT:
@@ -195,6 +199,7 @@ int handle_cons(struct socks4_server* server) {
         add_send_req(req_read_client->client_fd, req_read_client, &server->ring);
         dbg(printf(log_msg"Connect req, client_fd: %d, client_proxing_fd: %d\n", req->client_fd, req->client_proxing_fd));
         //add_provide_buf(&server->ring, bufs, req->client_bid, group_id);
+        free(req->send_buf);
         free(req);
         break;
       case WRITE_ERR_TO_CLIENT:
@@ -226,7 +231,6 @@ int handle_cons(struct socks4_server* server) {
         req_read_client_proxing = (client_t*)malloc(sizeof(client_t));
         prep_sockets(req, req_read_client_proxing);
         add_provide_buf(&server->ring, bufs, req->client_proxing_bid, group_id);
-        //prep_new_recv_req(req_read_client_proxing, bufs[req->client_proxing_bid]);
         req_read_client_proxing->state = READ_FROM_CLIENT_PROXING;
         //req_read_client_proxing->client_proxing_bid = req->client_proxing_bid;
         add_recv_req(req->client_proxing_fd, req_read_client_proxing, &server->ring);

@@ -9,15 +9,13 @@
 #define SOCKS4_VER 4u
 #define SOCKS4_CONNECT_COMMAD 1
 #define SOCKS4_BIND_COMMAND 2
-#define QUEUE_DEPTH 4096
+#define QUEUE_DEPTH 2048
 
 #define MAX_MESSAGE_LEN 4096
 #define BUFFERS_COUNT   2048
 
 #define ANTOHS(data, i) \
   (((uint16_t)(data)[(i)] << 8) + (uint8_t)(data)[(i) + 1])
-
-// #define SOCKS_DEBUG
 
 typedef enum {
   recv_cons,
@@ -45,9 +43,9 @@ struct socks4_server {
   int server_fd;
   server_state state;
   struct sockaddr_in server_addr;
-  struct timeval* con_timeout;
-  struct timeval* recv_timeout;
-  struct timeval* send_timeout;
+  struct timeval *con_timeout;
+  struct timeval *recv_timeout;
+  struct timeval *send_timeout;
   struct io_uring ring;
   struct io_uring_cqe *cqe;
 };
@@ -56,14 +54,13 @@ typedef struct {
   int client_fd;
   int client_proxing_fd;
   event_type state;
-  //size_t recv_len;
   char* send_buf;
   size_t send_buf_len;
   __u16 client_bid;
   __u16 client_proxing_bid;
 } client_t;
 
-int setup_listening_socket(struct socks4_server* server);
-int handle_cons(struct socks4_server* server);
+int setup_listening_socket(struct socks4_server *server);
+int handle_cons(struct socks4_server *server);
 
 #endif
