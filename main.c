@@ -3,7 +3,6 @@
 #include <netinet/in.h>
 #include <netdb.h>
 #include <stdio.h>
-#include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -16,10 +15,9 @@ const char* host = "127.0.0.2";
 int main(void) {
   printf(log_msg"starting on: %s:%d\n", host, PORT);
   dbg(puts(log_msg"debug mode is enable"));
-  struct socks4_server server;
-  struct sockaddr_in addr;
+  struct socks4_server server = {0};
+  struct sockaddr_in addr = {0};
   struct timeval recv_timeout = { .tv_sec = 2, .tv_usec = 0};
-  memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = inet_addr(host);
   addr.sin_port = htons(PORT);

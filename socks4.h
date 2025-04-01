@@ -18,13 +18,6 @@
   (((uint16_t)(data)[(i)] << 8) + (uint8_t)(data)[(i) + 1])
 
 typedef enum {
-  recv_cons,
-  con_to_dst,
-  sending_error,
-  proxing
-} server_state;
-
-typedef enum {
   ACCEPT=1,
   READ_FROM_CLIENT,
   READ_FROM_CLIENT_PROXING,
@@ -37,11 +30,8 @@ typedef enum {
   PROV_BUF
 } event_type;
 
-
-
 struct socks4_server {
   int server_fd;
-  server_state state;
   struct sockaddr_in server_addr;
   struct timeval *con_timeout;
   struct timeval *recv_timeout;
@@ -54,8 +44,8 @@ typedef struct {
   int client_fd;
   int client_proxing_fd;
   event_type state;
-  char* send_buf;
-  size_t send_buf_len;
+  char *send_buf;
+  size_t send_len;
   __u16 client_bid;
   __u16 client_proxing_bid;
 } client_t;

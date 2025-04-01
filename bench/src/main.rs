@@ -9,8 +9,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 // TODO: get these consts from cmd
 const PROXY_ADDR: &str = "127.0.0.2:6969";
 const TARGET_ADDR: &str = "127.0.0.2:5252";
-const CONCURRENT_CON: usize = 400;
-const SENDING_PACKETS_FOR_EACH_CON: usize = 5;
+const CONCURRENT_CON: usize = 450;
+const SENDING_PACKETS_FOR_EACH_CON: usize = 10;
 const PACKET_SIZE: usize = 10;
 
 #[tokio::main]

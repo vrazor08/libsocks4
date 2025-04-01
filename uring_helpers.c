@@ -38,7 +38,7 @@ void add_recv_req(int fd, client_t *req, struct io_uring *ring) {
 
 int add_send_req(int fd, client_t *req, struct io_uring *ring) {
   struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-  io_uring_prep_send(sqe, fd, req->send_buf, req->send_buf_len, 0);
+  io_uring_prep_send(sqe, fd, req->send_buf, req->send_len, 0);
   io_uring_sqe_set_data(sqe, (void*)req);
   io_uring_submit(ring);
   return 0;

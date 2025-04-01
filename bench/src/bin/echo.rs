@@ -11,7 +11,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
   loop {
     let (mut socket, client_addr) = listener.accept().await?;
-    println!("Accepted connection from: {client_addr:?}");
+    if cfg!(debug_assertions) { println!("Accepted connection from: {client_addr:?}"); }
     socket.set_nodelay(true).unwrap();
     tokio::spawn(async move {
       let mut buf = vec![0; 1024];
