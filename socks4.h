@@ -33,9 +33,7 @@ typedef enum {
 struct socks4_server {
   int server_fd;
   struct sockaddr_in server_addr;
-  struct timeval *con_timeout;
-  struct timeval *recv_timeout;
-  struct timeval *send_timeout;
+  struct __kernel_timespec *ts;
   struct io_uring ring;
   struct io_uring_cqe *cqe;
 };

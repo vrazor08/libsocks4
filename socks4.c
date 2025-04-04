@@ -59,14 +59,13 @@ int setup_listening_socket(struct socks4_server* server) {
   printf("sq ring entries: %u\n", server->ring.sq.ring_entries);
   printf("cq ring entries: %u\n", server->ring.cq.ring_entries);
   printf("ring features: %u\n", server->ring.features);
-  struct io_uring_sqe *sqe;
-  sqe = io_uring_get_sqe(&server->ring);
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&server->ring);
   io_uring_prep_provide_buffers(sqe, bufs, MAX_MESSAGE_LEN, BUFFERS_COUNT, group_id, 0);
   io_uring_submit(&server->ring);
   io_uring_wait_cqe(&server->ring, &server->cqe);
   if (server->cqe->res < 0) {
-      fprintf(stderr, "cqe->res = %d\n", server->cqe->res);
-      return -1;
+    fprintf(stderr, "cqe->res = %d\n", server->cqe->res);
+    return -1;
   }
   io_uring_cqe_seen(&server->ring, server->cqe);
   return 0;
@@ -100,6 +99,7 @@ int handle_cons(struct socks4_server* server) {
   add_accept_req(fd, &client_addr_len, &server->ring);
   for (;;) {
     int ret = io_uring_wait_cqe(&server->ring, &server->cqe);
+    //int ret = io_uring_wait_cqe_timeout(&server->ring, &server->cqe, server->ts);
     if (ret < 0) bail(log_msg"io_uring_wait_cqe");
     req = (client_t*)server->cqe->user_data;
     if (server->cqe->res < 0) {
