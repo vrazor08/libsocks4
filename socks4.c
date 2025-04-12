@@ -14,9 +14,9 @@
 #include "err.h"
 #include "uring_helpers.h"
 
-const int yes = 1;
-const char success_socks_ans  [] = {0, 90, 0, 0, 0, 0, 0, 0};
-const char unsuccess_socks_ans[] = {0, 91, 0, 0, 0, 0, 0, 0};
+static const int yes = 1;
+static const char success_socks_ans  [] = {0, 90, 0, 0, 0, 0, 0, 0};
+static const char unsuccess_socks_ans[] = {0, 91, 0, 0, 0, 0, 0, 0};
 
 const char *StateToStr[] = {
   "Nothing",
@@ -32,8 +32,8 @@ const char *StateToStr[] = {
   "PROV_BUF"
 };
 
-char bufs[BUFFERS_COUNT][MAX_MESSAGE_LEN] = {0};
-const int group_id = 0;
+static char bufs[BUFFERS_COUNT][MAX_MESSAGE_LEN] = {0};
+static const int group_id = 0;
 
 static inline void prep_sockets(client_t *old_req, client_t *new_req) {
   new_req->client_fd = old_req->client_fd;
@@ -56,9 +56,9 @@ int setup_listening_socket(struct socks4_server* server) {
     close(fd);
     return -1;
   }
-  printf("sq ring entries: %u\n", server->ring.sq.ring_entries);
-  printf("cq ring entries: %u\n", server->ring.cq.ring_entries);
-  printf("ring features: %u\n", server->ring.features);
+  dbg(printf(log_msg"sq ring entries: %u\n", server->ring.sq.ring_entries));
+  dbg(printf(log_msg"cq ring entries: %u\n", server->ring.cq.ring_entries));
+  dbg(printf(log_msg"ring features: %u\n", server->ring.features));
   struct io_uring_sqe *sqe = io_uring_get_sqe(&server->ring);
   io_uring_prep_provide_buffers(sqe, bufs, MAX_MESSAGE_LEN, BUFFERS_COUNT, group_id, 0);
   io_uring_submit(&server->ring);
@@ -117,12 +117,12 @@ int handle_cons(struct socks4_server* server) {
       case ACCEPT:
         req->client_fd = server->cqe->res;
 
-        #ifdef SOCKS_DEBUG
+#ifdef SOCKS_DEBUG
         char client_ip_str[INET_ADDRSTRLEN];
         struct sockaddr_in *client_addr = (struct sockaddr_in*)req->send_buf;
         inet_ntop(AF_INET, &client_addr->sin_addr, client_ip_str, INET_ADDRSTRLEN);
         printf(log_msg"Accepted connection from: %s:%u\n", client_ip_str, client_addr->sin_port);
-        #endif
+#endif
 
         free(req->send_buf);
         if (setsockopt(req->client_fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(int)) < 0) {
@@ -168,11 +168,11 @@ int handle_cons(struct socks4_server* server) {
         client_req->send_buf = (char*)proxy_client_dst; // TODO: maybe add new field
         dbg(printf(log_msg"server->cqe->flags >> 16 = %u\n", server->cqe->flags >> 16));
         //add_provide_buf(&server->ring, bufs, server->cqe->flags >> 16, group_id);
-        #ifdef SOCKS_DEBUG
+#ifdef SOCKS_DEBUG
         char dst_ip_str[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &proxy_client_dst->sin_addr, dst_ip_str, INET_ADDRSTRLEN);
         printf(log_msg"Connect to dst: %s:%u\n", dst_ip_str, proxy_client_dst->sin_port);
-        #endif
+#endif
         int con_fd = socket(AF_INET, SOCK_STREAM, 0);
         if (con_fd == -1) bail("client socket creation failed");
         if (setsockopt(con_fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(int)) < 0) close_bail(con_fd, log_msg"TCP_NODELAY");

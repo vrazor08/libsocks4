@@ -51,6 +51,8 @@ void add_provide_buf(struct io_uring *ring, char bufs[BUFFERS_COUNT][MAX_MESSAGE
   req->state = PROV_BUF;
   req->client_bid = bid;
   io_uring_sqe_set_data(sqe, (void*)req);
-  if (bufs[bid][0] == 2) { dbg(printf("try to provide buffer: bufs[%u] but that is already provided\n", bid));}
+#ifdef SOCKS_DEBUG
+  if (bufs[bid][0] == 2) { printf("try to provide buffer: bufs[%u] but that is already provided\n", bid); }
+#endif
   io_uring_submit(ring);
 }
