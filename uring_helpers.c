@@ -8,13 +8,9 @@
 #include "uring_helpers.h"
 #include "socks4.h"
 
-void add_accept_req(int fd, socklen_t *addr_len, struct io_uring *ring) {
+void add_accept_req(int fd, client_t *req, struct io_uring *ring) {
   struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-  struct sockaddr_in *client_addr = malloc(sizeof(struct sockaddr_in));
-  io_uring_prep_accept(sqe, fd, (struct sockaddr*)client_addr, addr_len, 0);
-  client_t *req = malloc(sizeof(client_t));
-  req->send_buf = (char*)client_addr;
-  req->state = ACCEPT;
+  io_uring_prep_multishot_accept(sqe, fd, NULL, NULL, 0);
   io_uring_sqe_set_data(sqe, (void*)req);
   io_uring_submit(ring);
 }

@@ -47,7 +47,6 @@ int setup_listening_socket(struct socks4_server* server) {
   if (bind(fd, (struct sockaddr *)&server->server_addr, sizeof(server->server_addr)) == -1) close_bail(fd, log_msg"bind");
   if (listen(fd, 512) == -1) close_bail(fd, log_msg"listen");
   params.flags |= IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_CLAMP;
-	//params.flags |= IORING_SETUP_CQSIZE;
 	params.flags |= IORING_SETUP_COOP_TASKRUN;
 	params.flags |= IORING_SETUP_DEFER_TASKRUN;
   int rv = io_uring_queue_init_params(QUEUE_DEPTH, &server->ring, &params);
@@ -96,11 +95,18 @@ int handle_cons(struct socks4_server* server) {
   int fd = server->server_fd;
   client_t *req, *client_req, *dst_host;
   socklen_t client_addr_len = sizeof(struct sockaddr_in);
-  add_accept_req(fd, &client_addr_len, &server->ring);
+  client_t accept_req = { .state = ACCEPT};
+  add_accept_req(fd, &accept_req, &server->ring);
   for (;;) {
-    int ret = io_uring_wait_cqe(&server->ring, &server->cqe);
-    //int ret = io_uring_wait_cqe_timeout(&server->ring, &server->cqe, server->ts);
-    if (ret < 0) bail(log_msg"io_uring_wait_cqe");
+    //int ret = io_uring_wait_cqe(&server->ring, &server->cqe);
+    int ret = io_uring_wait_cqe_timeout(&server->ring, &server->cqe, server->ts);
+    if (ret < 0) {
+      if (ret != -ETIME) {
+        fprintf(stderr, log_msg"io_uring_wait_cqe_timeout: %s\n", strerror(-ret));
+        fprintf(stderr, log_msg"-ret=%d\n", -ret);
+      } else { dbg(print(log_msg"io_uring_wait_cqe_timeout: Timer expired")); }
+      continue;
+    }
     req = (client_t*)server->cqe->user_data;
     if (server->cqe->res < 0) {
       // TODO: if for state we have fds - maybe close them. And if we have bids maybe call add_provide_buf
@@ -116,21 +122,14 @@ int handle_cons(struct socks4_server* server) {
     switch (req->state) {
       case ACCEPT:
         req->client_fd = server->cqe->res;
-
-#ifdef SOCKS_DEBUG
-        char client_ip_str[INET_ADDRSTRLEN];
-        struct sockaddr_in *client_addr = (struct sockaddr_in*)req->send_buf;
-        inet_ntop(AF_INET, &client_addr->sin_addr, client_ip_str, INET_ADDRSTRLEN);
-        printf(log_msg"Accepted connection from: %s:%u\n", client_ip_str, client_addr->sin_port);
-#endif
-
-        free(req->send_buf);
+        if (!(server->cqe->flags & IORING_CQE_F_MORE)) {
+          add_accept_req(fd, &accept_req, &server->ring);
+          fprintf(stderr, log_msg"Some accept error");
+        }
         if (setsockopt(req->client_fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(int)) < 0) {
           fprintf(stderr, log_msg"error req->client_fd: %d\n", req->client_fd);
           perror(log_msg"TCP_NODELAY");
           close(req->client_fd);
-          add_accept_req(fd, &client_addr_len, &server->ring);
-          free(req);
           break;
         }
         client_req = (client_t*)malloc(sizeof(client_t));
@@ -138,8 +137,6 @@ int handle_cons(struct socks4_server* server) {
         client_req->state = FIRST_READ;
         add_recv_req(req->client_fd, client_req, &server->ring);
         dbg(printf(log_msg"accept fd: %d\n", req->client_fd));
-        free(req);
-        add_accept_req(fd, &client_addr_len, &server->ring);
         break;
       case FIRST_READ:
         if (!server->cqe->res) {
