@@ -35,6 +35,7 @@ struct socks4_server {
   struct sockaddr_in server_addr;
   struct __kernel_timespec *ts;
   struct io_uring ring;
+  struct io_uring_buf_ring *br;
   struct io_uring_cqe *cqe;
 };
 

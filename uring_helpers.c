@@ -40,15 +40,10 @@ int add_send_req(int fd, client_t *req, struct io_uring *ring) {
   return 0;
 }
 
-void add_provide_buf(struct io_uring *ring, char bufs[BUFFERS_COUNT][MAX_MESSAGE_LEN], __u16 bid, unsigned gid) {
-  struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-  io_uring_prep_provide_buffers(sqe, bufs[bid], MAX_MESSAGE_LEN, 1, gid, bid);
-  client_t *req = malloc(sizeof(client_t));
-  req->state = PROV_BUF;
-  req->client_bid = bid;
-  io_uring_sqe_set_data(sqe, (void*)req);
+void add_provide_buf(struct io_uring_buf_ring *br, char bufs[BUFFERS_COUNT][MAX_MESSAGE_LEN], __u16 bid) {
+  io_uring_buf_ring_add(br, bufs[bid], MAX_MESSAGE_LEN, bid, io_uring_buf_ring_mask(BUFFERS_COUNT), 0);
+	io_uring_buf_ring_advance(br, 1);
 #ifdef SOCKS_DEBUG
   if (bufs[bid][0] == 2) { printf("try to provide buffer: bufs[%u] but that is already provided\n", bid); }
 #endif
-  io_uring_submit(ring);
 }

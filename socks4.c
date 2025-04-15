@@ -1,17 +1,15 @@
 #include <arpa/inet.h>
-#include <assert.h>
 #include <liburing.h>
-#include <limits.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <sys/socket.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
-#include "socks4.h"
 #include "err.h"
+#include "socks4.h"
 #include "uring_helpers.h"
 
 static const int yes = 1;
@@ -45,7 +43,7 @@ int setup_listening_socket(struct socks4_server* server) {
   struct io_uring_params params = {0};
   if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) < 0) close_bail(fd, log_msg"SO_REUSEADDR");
   if (bind(fd, (struct sockaddr *)&server->server_addr, sizeof(server->server_addr)) == -1) close_bail(fd, log_msg"bind");
-  if (listen(fd, 512) == -1) close_bail(fd, log_msg"listen");
+  if (listen(fd, SOMAXCONN) == -1) close_bail(fd, log_msg"listen");
   params.flags |= IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_CLAMP;
 	params.flags |= IORING_SETUP_COOP_TASKRUN;
 	params.flags |= IORING_SETUP_DEFER_TASKRUN;
@@ -58,15 +56,24 @@ int setup_listening_socket(struct socks4_server* server) {
   dbg(printf(log_msg"sq ring entries: %u\n", server->ring.sq.ring_entries));
   dbg(printf(log_msg"cq ring entries: %u\n", server->ring.cq.ring_entries));
   dbg(printf(log_msg"ring features: %u\n", server->ring.features));
-  struct io_uring_sqe *sqe = io_uring_get_sqe(&server->ring);
-  io_uring_prep_provide_buffers(sqe, bufs, MAX_MESSAGE_LEN, BUFFERS_COUNT, group_id, 0);
-  io_uring_submit(&server->ring);
-  io_uring_wait_cqe(&server->ring, &server->cqe);
-  if (server->cqe->res < 0) {
-    fprintf(stderr, "cqe->res = %d\n", server->cqe->res);
-    return -1;
-  }
-  io_uring_cqe_seen(&server->ring, server->cqe);
+  struct io_uring_buf_reg reg = { 0 };
+	struct io_uring_buf_ring *br;
+
+	if (posix_memalign((void **) &br, getpagesize(), BUFFERS_COUNT * sizeof(struct io_uring_buf_ring)))
+	  close_bail(fd, log_msg"posix_memalign");
+
+	reg.ring_addr = (unsigned long) br;
+	reg.ring_entries = BUFFERS_COUNT;
+	reg.bgid = group_id;
+	if (io_uring_register_buf_ring(&server->ring, &reg, 0)) close_bail(fd, log_msg"io_uring_register_buf_ring");
+
+	io_uring_buf_ring_init(br);
+	for (int i = 0; i < BUFFERS_COUNT; i++) {
+		io_uring_buf_ring_add(br, bufs[i], MAX_MESSAGE_LEN, i, io_uring_buf_ring_mask(BUFFERS_COUNT), i);
+	}
+
+	io_uring_buf_ring_advance(br, BUFFERS_COUNT);
+	server->br = br;
   return 0;
 }
 
@@ -104,7 +111,7 @@ int handle_cons(struct socks4_server* server) {
       if (ret != -ETIME) {
         fprintf(stderr, log_msg"io_uring_wait_cqe_timeout: %s\n", strerror(-ret));
         fprintf(stderr, log_msg"-ret=%d\n", -ret);
-      } else { dbg(print(log_msg"io_uring_wait_cqe_timeout: Timer expired")); }
+      } else { dbg(printf(log_msg"io_uring_wait_cqe_timeout: Timer expired\n")); }
       continue;
     }
     req = (client_t*)server->cqe->user_data;
@@ -197,13 +204,13 @@ int handle_cons(struct socks4_server* server) {
         fprintf(stderr, log_msg"WRITE_ERR_TO_CLIENT: uncorrect first socks4 send from client: %d\n", req->client_fd);
         shutdown(req->client_fd, SHUT_RDWR);
         close(req->client_fd);
-        add_provide_buf(&server->ring, bufs, req->client_bid, group_id);
+        add_provide_buf(server->br, bufs, req->client_bid);
         free(req);
         break;
       case WRITE_TO_CLIENT_AFTER_CONNECT:
         //bid = server->cqe->flags >> 16;
         //add_provide_buf(&server->ring, bufs, __u16 bid, unsigned int gid)
-        add_provide_buf(&server->ring, bufs, req->client_bid, group_id);
+        add_provide_buf(server->br, bufs, req->client_bid);
         client_req = (client_t*)malloc(sizeof(client_t));
         prep_sockets(req, client_req);
         client_req->state = READ_FROM_CLIENT;
@@ -218,10 +225,10 @@ int handle_cons(struct socks4_server* server) {
         free(req);
         break;
       case WRITE_TO_CLIENT:
-        //add_provide_buf(&server->ring, bufs, server->cqe->flags >> 16, group_id);
+        //add_provide_buf(&server->ring, bufs, server->cqe->flags >> 16);
         dst_host = (client_t*)malloc(sizeof(client_t));
         prep_sockets(req, dst_host);
-        add_provide_buf(&server->ring, bufs, req->client_proxing_bid, group_id);
+        add_provide_buf(server->br, bufs, req->client_proxing_bid);
         dst_host->state = READ_FROM_CLIENT_PROXING;
         //dst_host->client_proxing_bid = req->client_proxing_bid;
         add_recv_req(req->client_proxing_fd, dst_host, &server->ring);
@@ -257,10 +264,10 @@ int handle_cons(struct socks4_server* server) {
         free(req);
         break;
       case WRITE_TO_CLIENT_PROXING:
-        //add_provide_buf(&server->ring, bufs, server->cqe->flags >> 16, group_id);
+        //add_provide_buf(&server->ring, bufs, server->cqe->flags >> 16);
         client_req = (client_t*)malloc(sizeof(client_t));
         prep_sockets(req, client_req);
-        add_provide_buf(&server->ring, bufs, req->client_bid, group_id);
+        add_provide_buf(server->br, bufs, req->client_bid);
         client_req->state = READ_FROM_CLIENT;
         //client_req->client_bid = req->client_bid;
         add_recv_req(req->client_fd, client_req, &server->ring);
@@ -277,7 +284,6 @@ int handle_cons(struct socks4_server* server) {
           //shutdown(req->client_proxing_fd, SHUT_RDWR);
           dbg(bufs[server->cqe->flags >> 16][0] = 3);
           //add_provide_buf(&server->ring, bufs, server->cqe->flags >> 16, group_id);
-
           shutdown(req->client_fd, SHUT_RDWR);
           //close(req->client_proxing_fd);
           close(req->client_fd);
