@@ -6,6 +6,7 @@
 #include <liburing.h>
 #include <stdio.h>
 
+
 #define SOCKS4_VER 4u
 #define SOCKS4_CONNECT_COMMAD 1
 #define SOCKS4_BIND_COMMAND 2
@@ -13,6 +14,7 @@
 
 #define MAX_MESSAGE_LEN 4096
 #define BUFFERS_COUNT   2048
+#define GROUP_ID 0
 
 #define ANTOHS(data, i) \
   (((uint16_t)(data)[(i)] << 8) + (uint8_t)(data)[(i) + 1])
@@ -27,7 +29,6 @@ typedef enum {
   WRITE_TO_CLIENT_AFTER_CONNECT,
   WRITE_TO_CLIENT_PROXING,
   CONNECT,
-  PROV_BUF
 } event_type;
 
 struct socks4_server {

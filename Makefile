@@ -12,7 +12,7 @@ debug:
 	cc -I. examples/main.c socks4.c uring_helpers.c -o examples/socks4-debug -DSOCKS_DEBUG $(CFLAGS) -ggdb -luring
 
 build/uring_helpers.o: uring_helpers.c uring_helpers.h socks4.h
-	cc uring_helpers.c -c -o build/uring_helpers.o $(CFLAGS)
+	cc uring_helpers.c -c -o build/uring_helpers.o -fPIC $(CFLAGS)
 
 build/socks4.o: socks4.c socks4.h uring_helpers.h err.h
 	cc socks4.c -c -o build/socks4.o -fPIC $(CFLAGS)
