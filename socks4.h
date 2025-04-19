@@ -20,16 +20,27 @@
   (((uint16_t)(data)[(i)] << 8) + (uint8_t)(data)[(i) + 1])
 
 typedef enum {
-  ACCEPT=1,
-  READ_FROM_CLIENT,
-  READ_FROM_CLIENT_PROXING,
-  FIRST_READ,
-  WRITE_ERR_TO_CLIENT,
-  WRITE_TO_CLIENT,
-  WRITE_TO_CLIENT_AFTER_CONNECT,
-  WRITE_TO_CLIENT_PROXING,
-  CONNECT,
+  ACCEPT=1<<0,
+  READ_FROM_CLIENT=1<<1,
+  READ_FROM_CLIENT_PROXING=1<<2,
+  FIRST_READ=1<<3,
+  WRITE_ERR_TO_CLIENT=1<<4,
+  WRITE_TO_CLIENT=1<<5,
+  WRITE_TO_CLIENT_AFTER_CONNECT=1<<6,
+  WRITE_TO_CLIENT_PROXING=1<<7,
+  CONNECT=1<<8,
 } event_type;
+
+#define ALL_EVENT_TYPES \
+  ACCEPT| \
+  READ_FROM_CLIENT| \
+  READ_FROM_CLIENT_PROXING| \
+  FIRST_READ| \
+  WRITE_ERR_TO_CLIENT| \
+  WRITE_TO_CLIENT| \
+  WRITE_TO_CLIENT_AFTER_CONNECT| \
+  WRITE_TO_CLIENT_PROXING| \
+  CONNECT
 
 struct socks4_server {
   int server_fd;
@@ -51,6 +62,6 @@ typedef struct {
 } client_t;
 
 int setup_listening_socket(struct socks4_server *server);
-int handle_cons(struct socks4_server *server);
+int handle_cons(struct socks4_server *server, void (*handler)(client_t*, struct io_uring_cqe*), event_type handler_call_events);
 
 #endif

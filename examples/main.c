@@ -1,14 +1,66 @@
 #include <arpa/inet.h>
+#include <liburing/io_uring.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include "socks4.h"
-#include "err.h"
+#include "../socks4.h"
+#include "../err.h"
 
-const char* host = "127.0.0.2";
+const char *host = "127.0.0.2";
 #define PORT 6969
+
+void logger(client_t *req, struct io_uring_cqe *cqe) {
+  char dst_ip_str[INET_ADDRSTRLEN];
+  struct sockaddr_in *proxy_client_dst;
+  switch (req->state) {
+    case ACCEPT:
+      printf(log_msg"accept fd: %d\n", req->client_fd);
+      break;
+
+    case FIRST_READ:
+      if (cqe->res <= 0)
+        printf("\n"log_msg"server->cqe->res=0, closed client_fd: %d\n", req->client_fd);
+      printf("\n"log_msg"first read from client: %d\n", req->client_fd);
+      printf(log_msg"server->cqe->flags >> IORING_CQE_BUFFER_SHIFT = %u\n", cqe->flags >> IORING_CQE_BUFFER_SHIFT);
+      break;
+
+    case CONNECT:
+      proxy_client_dst = (struct sockaddr_in*)req->send_buf;
+      inet_ntop(AF_INET, &proxy_client_dst->sin_addr, dst_ip_str, INET_ADDRSTRLEN);
+      printf(log_msg"Connect to dst: %s:%u\n", dst_ip_str, proxy_client_dst->sin_port);
+      printf(log_msg"Connect req, client_fd: %d, client_proxing_fd: %d\n", req->client_fd, req->client_proxing_fd);
+      break;
+
+    case WRITE_ERR_TO_CLIENT:
+      break;
+
+    case WRITE_TO_CLIENT_AFTER_CONNECT:
+      printf(log_msg"WRITE_TO_CLIENT_AFTER_CONNECT, client_fd: %d, client_proxing_fd: %d\n", req->client_fd, req->client_proxing_fd);
+      break;
+
+    case WRITE_TO_CLIENT:
+      printf(log_msg"WRITE_TO_CLIENT, client_fd: %d, client_proxing_fd: %d\n", req->client_fd, req->client_proxing_fd);
+      break;
+
+    case READ_FROM_CLIENT:
+      if (cqe->res <= 0)
+        printf(log_msg"exit=0, closed client_proxing_fd: %d, add_provide_buf: %u\n", req->client_proxing_fd, cqe->flags >> IORING_CQE_BUFFER_SHIFT);
+      printf(log_msg"READ_FROM_CLIENT: %d, %d bytes\n", req->client_fd, cqe->res);
+      break;
+
+    case WRITE_TO_CLIENT_PROXING:
+      printf(log_msg"WRITE_TO_CLIENT_PROXING, client_fd: %d, client_proxing_fd: %d\n", req->client_fd, req->client_proxing_fd);
+      break;
+
+    case READ_FROM_CLIENT_PROXING:
+      printf(log_msg"READ_FROM_CLIENT_PROXING: %d, %d bytes\n", req->client_proxing_fd, cqe->res);
+      if (cqe->res <= 0)
+        printf(log_msg"exit=0, closed client_fd: %d, add_provide_buf: %u\n", req->client_fd, cqe->flags >> IORING_CQE_BUFFER_SHIFT);
+      break;
+  }
+}
 
 int main(void) {
   printf(log_msg"starting on: %s:%d\n", host, PORT);
@@ -25,7 +77,11 @@ int main(void) {
   if (fd < 0) return 1;
   server.server_fd = fd;
   if (setup_listening_socket(&server) != 0) return 1;
-  if (handle_cons(&server) != 0) { close(server.server_fd); return 1; }
+#ifdef SOCKS_DEBUG
+  if (handle_cons(&server, logger, ALL_EVENT_TYPES) != 0) { close(server.server_fd); return 1; }
+#else
+  if (handle_cons(&server, NULL, 0) != 0) { close(server.server_fd); return 1; }
+#endif
   io_uring_queue_exit(&server.ring);
   close(server.server_fd);
   return 0;

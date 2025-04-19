@@ -16,7 +16,7 @@ static const int yes = 1;
 static const char success_socks_ans  [] = {0, 90, 0, 0, 0, 0, 0, 0};
 static const char unsuccess_socks_ans[] = {0, 91, 0, 0, 0, 0, 0, 0};
 
-const char *StateToStr[] = {
+const char *StateStrs[] = {
   "Nothing",
   "ACCEPT",
   "READ_FROM_CLIENT",
@@ -27,8 +27,13 @@ const char *StateToStr[] = {
   "WRITE_TO_CLIENT_AFTER_CONNECT",
   "WRITE_TO_CLIENT_PROXING",
   "CONNECT",
-  "PROV_BUF"
 };
+
+const char *state_to_str(unsigned int state) {
+  int i;
+  for (i = 0; state > 1; state >>= 1, i++);
+  return StateStrs[i+1];
+}
 
 static char bufs[BUFFERS_COUNT][MAX_MESSAGE_LEN] = {0};
 
@@ -52,9 +57,6 @@ int setup_listening_socket(struct socks4_server* server) {
     close(fd);
     return -1;
   }
-  dbg(printf(log_msg"sq ring entries: %u\n", server->ring.sq.ring_entries));
-  dbg(printf(log_msg"cq ring entries: %u\n", server->ring.cq.ring_entries));
-  dbg(printf(log_msg"ring features: %u\n", server->ring.features));
   struct io_uring_buf_reg reg = { 0 };
 	struct io_uring_buf_ring *br;
 
@@ -97,7 +99,7 @@ int handle_client_req(char *buf, size_t buf_len, struct sockaddr_in *sin) {
   return 0;
 }
 
-int handle_cons(struct socks4_server* server) {
+int handle_cons(struct socks4_server* server, void (*handler)(client_t*, struct io_uring_cqe*), event_type func_call) {
   int fd = server->server_fd;
   client_t *req, *client_req, *dst_host;
   socklen_t client_addr_len = sizeof(struct sockaddr_in);
@@ -110,7 +112,7 @@ int handle_cons(struct socks4_server* server) {
       if (ret != -ETIME) {
         fprintf(stderr, log_msg"io_uring_wait_cqe_timeout: %s\n", strerror(-ret));
         fprintf(stderr, log_msg"-ret=%d\n", -ret);
-      } else { dbg(printf(log_msg"io_uring_wait_cqe_timeout: Timer expired\n")); }
+      }
       continue;
     }
     io_uring_for_each_cqe(&server->ring, head, server->cqe) {
@@ -118,13 +120,20 @@ int handle_cons(struct socks4_server* server) {
       req = (client_t*)server->cqe->user_data;
       if (server->cqe->res < 0) {
         // TODO: if for state we have fds - maybe close them. And if we have bids maybe call add_provide_buf
-        fprintf(stderr, log_msg"%s for event: %s\n", strerror(-server->cqe->res), StateToStr[req->state]);
-        fprintf(stderr, log_msg"-server->cqe->res=%d\n", -server->cqe->res);
+        fprintf(stderr, log_msg"%s for event: %s\n", strerror(-server->cqe->res), state_to_str(req->state));
         // close(req->client_fd);
         // close(req->client_proxing_fd);
+        if (req->state == CONNECT) {
+          client_req = (client_t*)malloc(sizeof(client_t));
+          client_req->client_fd = req->client_fd;
+          client_req->state = WRITE_ERR_TO_CLIENT;
+          client_req->send_buf = (char*)unsuccess_socks_ans;
+          client_req->send_len = sizeof(unsuccess_socks_ans);
+          add_send_req(req->client_fd, client_req, &server->ring);
+        }
         free(req);
-        io_uring_cqe_seen(&server->ring, server->cqe);
-        continue;
+        fprintf(stderr, log_msg"-server->cqe->res=%d\n", -server->cqe->res);
+        break;
       }
 
       switch (req->state) {
@@ -140,20 +149,19 @@ int handle_cons(struct socks4_server* server) {
             close(req->client_fd);
             break;
           }
+          if (handler && func_call & ACCEPT) handler(req, server->cqe);
           client_req = (client_t*)malloc(sizeof(client_t));
           client_req->client_fd = req->client_fd;
           client_req->state = FIRST_READ;
           add_recv_req(req->client_fd, client_req, &server->ring);
-          dbg(printf(log_msg"accept fd: %d\n", req->client_fd));
           break;
         case FIRST_READ:
+          if (handler && func_call & FIRST_READ) handler(req, server->cqe);
           if (!server->cqe->res) {
             close(req->client_fd);
-            dbg(printf("\n"log_msg"server->cqe->res=0, closed client_fd: %d\n", req->client_fd));
             free(req);
             break;
           }
-          dbg(printf("\n"log_msg"first read from client: %d\n", req->client_fd));
           client_req = (client_t*)malloc(sizeof(client_t));
           client_req->client_fd = req->client_fd;
           client_req->client_bid = server->cqe->flags >> IORING_CQE_BUFFER_SHIFT;
@@ -170,22 +178,17 @@ int handle_cons(struct socks4_server* server) {
             break;
           }
           client_req->send_buf = (char*)proxy_client_dst; // TODO: maybe add new field
-          dbg(printf(log_msg"server->cqe->flags >> IORING_CQE_BUFFER_SHIFT = %u\n", server->cqe->flags >> IORING_CQE_BUFFER_SHIFT));
-#ifdef SOCKS_DEBUG
-          char dst_ip_str[INET_ADDRSTRLEN];
-          inet_ntop(AF_INET, &proxy_client_dst->sin_addr, dst_ip_str, INET_ADDRSTRLEN);
-          printf(log_msg"Connect to dst: %s:%u\n", dst_ip_str, proxy_client_dst->sin_port);
-#endif
+
           int con_fd = socket(AF_INET, SOCK_STREAM, 0);
           if (con_fd == -1) bail("client socket creation failed");
           if (setsockopt(con_fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(int)) < 0) close_bail(con_fd, log_msg"TCP_NODELAY");
-          dbg(printf(log_msg"client_proxing_fd: %d\n", con_fd));
           client_req->client_proxing_fd = con_fd;
           client_req->state = CONNECT;
           add_connect_req(client_req, proxy_client_dst, sizeof(*proxy_client_dst), &server->ring);
           free(req);
           break;
         case CONNECT:
+          if (handler && func_call & CONNECT) handler(req, server->cqe);
           client_req = (client_t*)malloc(sizeof(client_t));
           prep_sockets(req, client_req);
           client_req->send_buf = (char*)success_socks_ans;
@@ -193,18 +196,19 @@ int handle_cons(struct socks4_server* server) {
           client_req->state = WRITE_TO_CLIENT_AFTER_CONNECT;
           client_req->client_bid = req->client_bid;
           add_send_req(client_req->client_fd, client_req, &server->ring);
-          dbg(printf(log_msg"Connect req, client_fd: %d, client_proxing_fd: %d\n", req->client_fd, req->client_proxing_fd));
           free(req->send_buf);
           free(req);
           break;
         case WRITE_ERR_TO_CLIENT:
           fprintf(stderr, log_msg"WRITE_ERR_TO_CLIENT: uncorrect first socks4 send from client: %d\n", req->client_fd);
+          if (handler && func_call & WRITE_ERR_TO_CLIENT) handler(req, server->cqe);
           shutdown(req->client_fd, SHUT_RDWR);
           close(req->client_fd);
           add_provide_buf(server->br, bufs, req->client_bid);
           free(req);
           break;
         case WRITE_TO_CLIENT_AFTER_CONNECT:
+          if (handler && func_call & WRITE_TO_CLIENT_AFTER_CONNECT) handler(req, server->cqe);
           add_provide_buf(server->br, bufs, req->client_bid);
           client_req = (client_t*)malloc(sizeof(client_t));
           prep_sockets(req, client_req);
@@ -216,26 +220,24 @@ int handle_cons(struct socks4_server* server) {
           dst_host->state = READ_FROM_CLIENT_PROXING;
           add_recv_req(req->client_proxing_fd, dst_host, &server->ring);
 
-          dbg(printf(log_msg"WRITE_TO_CLIENT_AFTER_CONNECT, client_fd: %d, client_proxing_fd: %d\n", req->client_fd, req->client_proxing_fd));
           free(req);
           break;
         case WRITE_TO_CLIENT:
+          if (handler && func_call & WRITE_TO_CLIENT) handler(req, server->cqe);
           dst_host = (client_t*)malloc(sizeof(client_t));
           prep_sockets(req, dst_host);
           add_provide_buf(server->br, bufs, req->client_proxing_bid);
           dst_host->state = READ_FROM_CLIENT_PROXING;
           add_recv_req(req->client_proxing_fd, dst_host, &server->ring);
-          dbg(printf(log_msg"WRITE_TO_CLIENT, client_fd: %d, client_proxing_fd: %d\n", req->client_fd, req->client_proxing_fd));
 
           free(req);
           break;
         case READ_FROM_CLIENT:
-          dbg(printf(log_msg"READ_FROM_CLIENT: %d, %d bytes\n", req->client_fd, server->cqe->res));
+          if (handler && func_call & READ_FROM_CLIENT) handler(req, server->cqe);
           if (server->cqe->res <= 0) {
             dbg(bufs[server->cqe->flags >> IORING_CQE_BUFFER_SHIFT][0] = 3);
             shutdown(req->client_proxing_fd, SHUT_RDWR);
             close(req->client_proxing_fd);
-            dbg(printf(log_msg"exit=0, closed client_proxing_fd: %d, add_provide_buf: %u\n", req->client_proxing_fd, server->cqe->flags >> IORING_CQE_BUFFER_SHIFT));
             free(req);
             break;
           }
@@ -250,22 +252,20 @@ int handle_cons(struct socks4_server* server) {
           free(req);
           break;
         case WRITE_TO_CLIENT_PROXING:
+          if (handler && func_call & WRITE_TO_CLIENT_PROXING) handler(req, server->cqe);
           client_req = (client_t*)malloc(sizeof(client_t));
           prep_sockets(req, client_req);
           add_provide_buf(server->br, bufs, req->client_bid);
           client_req->state = READ_FROM_CLIENT;
           add_recv_req(req->client_fd, client_req, &server->ring);
-          dbg(printf(log_msg"WRITE_TO_CLIENT_PROXING, client_fd: %d, client_proxing_fd: %d\n", req->client_fd, req->client_proxing_fd));
-
           free(req);
           break;
         case READ_FROM_CLIENT_PROXING:
-          dbg(printf(log_msg"READ_FROM_CLIENT_PROXING: %d, %d bytes\n", req->client_proxing_fd, server->cqe->res));
+          if (handler && func_call & READ_FROM_CLIENT_PROXING) handler(req, server->cqe);
           if (server->cqe->res <= 0) {
             dbg(bufs[server->cqe->flags >> IORING_CQE_BUFFER_SHIFT][0] = 3);
             shutdown(req->client_fd, SHUT_RDWR);
             close(req->client_fd);
-            dbg(printf(log_msg"exit=0, closed client_fd: %d, add_provide_buf: %u\n", req->client_fd, server->cqe->flags >> IORING_CQE_BUFFER_SHIFT));
             free(req);
             break;
           }
