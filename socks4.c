@@ -79,7 +79,7 @@ int setup_listening_socket(struct socks4_server* server) {
 }
 
 int handle_client_req(char *buf, size_t buf_len, struct sockaddr_in *sin) {
-  if (buf_len < 3 || buf_len > 30) {
+  if (buf_len < MIN_SOCKS_CONNECT_LEN || buf_len > MAX_SOCKS_CONNECT_LEN) {
     fprintf(stderr, log_msg"uncorrect recv_len: %lu\n", buf_len);
     return -1;
   }
@@ -180,7 +180,7 @@ int handle_cons(struct socks4_server* server, void (*handler)(client_t*, struct 
           client_req->send_buf = (char*)proxy_client_dst; // TODO: maybe add new field
 
           int con_fd = socket(AF_INET, SOCK_STREAM, 0);
-          if (con_fd == -1) bail("client socket creation failed");
+          if (con_fd == -1) bail(log_msg"client socket creation failed");
           if (setsockopt(con_fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(int)) < 0) close_bail(con_fd, log_msg"TCP_NODELAY");
           client_req->client_proxing_fd = con_fd;
           client_req->state = CONNECT;

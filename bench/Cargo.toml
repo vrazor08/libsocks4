@@ -8,4 +8,6 @@ strip = true
 debug-assertions = false
 
 [dependencies]
+anyhow = "1.0.98"
+structopt = "0.3.26"
 tokio = { version="1.43.0", features = ["net", "rt", "rt-multi-thread", "io-util", "macros"] }
