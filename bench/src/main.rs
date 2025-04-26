@@ -17,34 +17,34 @@ async fn safe_write<'a>(
   cur_total_send_pkts: Arc<AtomicU32>,
   cur_total_erros: Arc<AtomicU32>,
   mut write_stream: WriteHalf<'a>,
-  src: &'a [u8]
+  src: &[u8]
 ) -> (WriteHalf<'a>, Option<usize>) {
   cur_total_send_pkts.fetch_add(1, Ordering::SeqCst);
-  match (&mut write_stream).write(src).await {
-    Ok(n) => return (write_stream, Some(n)),
+  match write_stream.write(src).await {
+    Ok(n) => (write_stream, Some(n)),
     Err(e) => {
       cur_total_erros.fetch_add(1, Ordering::SeqCst);
-      if src.len() >= 1 && src[0] == 4 {
+      if !src.is_empty() && src[0] == 4 {
         eprintln!("write socks4 connect error: {}", e);
       } else {
         eprintln!("write socks4 error: {}", e);
       }
-      return (write_stream, None);
+      (write_stream, None)
     }
-  };
+  }
 }
 
-async fn safe_read<'a>(
+async fn safe_read(
   cur_total_erros: Arc<AtomicU32>,
-  mut read_stream: ReadHalf<'a>,
+  mut read_stream: ReadHalf<'_>,
   mut buf: Vec<u8>
-) -> (ReadHalf<'a>, Vec<u8>, Option<usize>) {
-  match (&mut read_stream).read(buf.as_mut_slice()).await {
-    Ok(n) => return (read_stream, buf, Some(n)),
+) -> (ReadHalf<'_>, Vec<u8>, Option<usize>) {
+  match read_stream.read(buf.as_mut_slice()).await {
+    Ok(n) => (read_stream, buf, Some(n)),
     Err(e) => {
       cur_total_erros.fetch_add(1, Ordering::SeqCst);
       eprintln!("read socks4 error: {}", e);
-      return (read_stream, buf, None);
+      (read_stream, buf, None)
     }
   }
 }
@@ -52,13 +52,25 @@ async fn safe_read<'a>(
 pub mod libsocks_test {
   use std::cmp::Ordering;
   use std::sync::Arc;
-
+  use std::mem::ManuallyDrop;
+  use std::process::Command;
   use anyhow::Context;
   use tokio::net::TcpStream;
   use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
   #[allow(non_upper_case_globals)]
   static unsuccess_socks_ans: [u8; 8] = [0, 91, 0, 0, 0, 0, 0, 0];
+
+  pub fn socks4_fds_count(socks_pid: usize) -> i32 {
+    let output = Command::new("bash")
+      .arg("-c")
+      .arg(format!("ls -l /proc/{socks_pid}/fd | awk 'BEGIN {{ sum = -1 }}; {{sum+=1}}; END {{ print sum }}'"))
+      .output()
+      .expect("Failed to get fds number");
+    assert!(output.status.success());
+    let str_output = String::from_utf8(output.stdout).unwrap();
+    str_output.trim().parse().expect("parse to i32")
+  }
 
   async fn send_bad_socks4_connect_req(socks4_connect_command: &[u8], proxy_addr: Arc<String>, concurrent_con_for_each: usize, func_name: &str) -> Result<(), anyhow::Error> {
     let mut read_buf = vec![0u8; 100];
@@ -131,6 +143,28 @@ pub mod libsocks_test {
       handler.await.unwrap();
     }
   }
+
+  pub async fn socks4_connect_without_shutdown(proxy_addr: Arc<String>, socks4_connect: Arc<[u8]>, concurrent_con: usize) {
+    let mut tmp_proxy_addr;
+    let mut tmp_connect;
+    let mut handlers = Vec::with_capacity(concurrent_con);
+    println!("socks4_connect_without_shutdown: conecting without shutdown {concurrent_con} times");
+    for _ in 0..concurrent_con {
+      tmp_proxy_addr = Arc::clone(&proxy_addr);
+      tmp_connect = Arc::clone(&socks4_connect);
+      handlers.push(tokio::spawn(async move {
+        let mut read_buf = vec![0; 100];
+        let stream = TcpStream::connect(tmp_proxy_addr.as_str()).await.expect("socks4_connect_without_shutdown:TcpStream::connect error");
+        stream.set_nodelay(true).unwrap();
+        let mut unsafe_stream = ManuallyDrop::new(stream);
+
+        unsafe_stream.write(&tmp_connect).await.expect("socks4_connect_without_shutdown:write(socks4_connect) error");
+        let n = unsafe_stream.read(read_buf.as_mut_slice()).await.expect("socks4_connect_without_shutdown:read error");
+        assert_eq!(n, 8, "socks4_connect_without_shutdown:read len != 8");
+      }));
+    }
+    for handler in handlers { let _ = handler.await; }
+  }
 }
 
 #[tokio::main]
@@ -140,28 +174,33 @@ async fn main() {
   let target_addr = cmd.target_addr;
   println!("sending to {target_addr} using socks4 proxy: {}", cmd.proxy_addr);
   let proxy_addr = Arc::new(cmd.proxy_addr);
-  let mut tmp_proxy_addr;
-  tmp_proxy_addr = Arc::clone(&proxy_addr);
+  let mut tmp_proxy_addr = Arc::clone(&proxy_addr);
   let proxy: SocketAddrV4 = target_addr.parse().unwrap();
+  let target_ip = proxy.ip().octets();
+  let target_port = proxy.port();
+  let socks4_connect: Arc<[u8; 8]> = Arc::new([4, 1, (target_port >> 8) as u8, (target_port & 0xFF) as u8, target_ip[0], target_ip[1], target_ip[2], target_ip[3]]);
   match cmd.mode {
     Subcommands::Test => {
-      libsocks_test::bad_socks4_connect(tmp_proxy_addr, cmd.concurrent_con).await
+      let fds_count_before = libsocks_test::socks4_fds_count(cmd.socks_pid);
+      libsocks_test::bad_socks4_connect(tmp_proxy_addr.clone(), cmd.concurrent_con).await;
+      tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+      assert_eq!(fds_count_before, libsocks_test::socks4_fds_count(cmd.socks_pid), "bad_socks4_connect: fds count != fds_count_before");
+      libsocks_test::socks4_connect_without_shutdown(tmp_proxy_addr.clone(), socks4_connect, cmd.concurrent_con).await;
+      tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+      assert_eq!(fds_count_before, libsocks_test::socks4_fds_count(cmd.socks_pid), "socks4_connect_without_shutdown: fds count != fds_count_before");
     }
     Subcommands::Bench => {
-      let target_ip = proxy.ip().octets();
-      let target_port = proxy.port();
-      let socks4_connect: [u8; 8] = [4, 1, (target_port >> 8) as u8, (target_port & 0xFF) as u8, target_ip[0], target_ip[1], target_ip[2], target_ip[3]];
-      println!("socks4_connect: {:?}", socks4_connect);
       let mut handlers = Vec::with_capacity(cmd.concurrent_con);
       let total_send_pkts = Arc::new(AtomicU32::new(0));
       let mut cur_total_send_pkts;
       let total_erros = Arc::new(AtomicU32::new(0));
       let mut cur_total_erros;
-
+      let mut tmp_connect;
       for i in 0..cmd.concurrent_con {
         cur_total_send_pkts = Arc::clone(&total_send_pkts);
         cur_total_erros = Arc::clone(&total_erros);
         tmp_proxy_addr = Arc::clone(&proxy_addr);
+        tmp_connect = Arc::clone(&socks4_connect);
         let handler = tokio::spawn(async move {
           let mut read_buf = vec![0; 1024];
           let write_data: Vec<u8> = vec![1; i+cmd.packet_size]; // TODO: maybe for debug build send some string
@@ -170,7 +209,7 @@ async fn main() {
           let (mut read_stream, mut write_stream) = stream.split();
           let mut opt_n;
           let mut write_bytes;
-          (write_stream, opt_n) = safe_write(cur_total_send_pkts.clone(), cur_total_erros.clone(), write_stream, &socks4_connect).await;
+          (write_stream, opt_n) = safe_write(cur_total_send_pkts.clone(), cur_total_erros.clone(), write_stream, tmp_connect.as_ref()).await;
           if opt_n.is_none() { return; }
           (read_stream, read_buf, opt_n) = safe_read(cur_total_erros.clone(), read_stream, read_buf).await;
           if let Some(n) = opt_n {
@@ -178,7 +217,7 @@ async fn main() {
               println!("shutdown with proxy because n = 0");
               return;
             }
-            assert_eq!(n, socks4_connect.len(), "socks4 connect reply != {}", socks4_connect.len());
+            assert_eq!(n, tmp_connect.len(), "socks4 connect reply != {}", tmp_connect.len());
           } else { return; }
           for _ in 0..cmd.sending_packets_for_each_con {
             (write_stream, opt_n) = safe_write(cur_total_send_pkts.clone(), cur_total_erros.clone(), write_stream, &write_data).await;
@@ -217,11 +256,11 @@ struct Cmd {
   mode: Subcommands,
 
   /// proxy server addr in ip:port format
-  #[structopt(short, long)]
+  #[structopt(long)]
   proxy_addr: String,
 
   /// target server addr in ip:port format
-  #[structopt(short, long)]
+  #[structopt(long)]
   target_addr: String,
 
   #[structopt(short="C", long, default_value="450")]
@@ -232,6 +271,10 @@ struct Cmd {
 
   /// One packet size
   #[structopt(short="P", long, default_value="10")]
-  packet_size: usize
+  packet_size: usize,
+
+  /// Socks server pid
+  #[structopt(short="p", long)]
+  socks_pid: usize
 
 }
