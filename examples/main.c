@@ -30,34 +30,37 @@ void logger(client_t *req, struct io_uring_cqe *cqe) {
       proxy_client_dst = (struct sockaddr_in*)req->send_buf;
       inet_ntop(AF_INET, &proxy_client_dst->sin_addr, dst_ip_str, INET_ADDRSTRLEN);
       printf(log_msg"Connect to dst: %s:%u\n", dst_ip_str, proxy_client_dst->sin_port);
-      printf(log_msg"Connect req, client_fd: %d, client_proxing_fd: %d\n", req->client_fd, req->client_proxing_fd);
+      printf(log_msg"Connect req, client_fd: %d, target_fd: %d\n", req->client_fd, req->target_fd);
       break;
 
     case WRITE_ERR_TO_CLIENT:
       break;
 
     case WRITE_TO_CLIENT_AFTER_CONNECT:
-      printf(log_msg"WRITE_TO_CLIENT_AFTER_CONNECT, client_fd: %d, client_proxing_fd: %d\n", req->client_fd, req->client_proxing_fd);
+      printf(log_msg"WRITE_TO_CLIENT_AFTER_CONNECT, client_fd: %d, target_fd: %d\n", req->client_fd, req->target_fd);
       break;
 
     case WRITE_TO_CLIENT:
-      printf(log_msg"WRITE_TO_CLIENT, client_fd: %d, client_proxing_fd: %d\n", req->client_fd, req->client_proxing_fd);
+      printf(log_msg"WRITE_TO_CLIENT, client_fd: %d, target_fd: %d\n", req->client_fd, req->target_fd);
       break;
 
     case READ_FROM_CLIENT:
       if (cqe->res <= 0)
-        printf(log_msg"exit=0, closed client_proxing_fd: %d, add_provide_buf: %u\n", req->client_proxing_fd, cqe->flags >> IORING_CQE_BUFFER_SHIFT);
+        printf(log_msg"exit=0, closed target_fd: %d, add_provide_buf: %u\n", req->target_fd, cqe->flags >> IORING_CQE_BUFFER_SHIFT);
       printf(log_msg"READ_FROM_CLIENT: %d, %d bytes\n", req->client_fd, cqe->res);
       break;
 
     case WRITE_TO_CLIENT_PROXING:
-      printf(log_msg"WRITE_TO_CLIENT_PROXING, client_fd: %d, client_proxing_fd: %d\n", req->client_fd, req->client_proxing_fd);
+      printf(log_msg"WRITE_TO_CLIENT_PROXING, client_fd: %d, target_fd: %d\n", req->client_fd, req->target_fd);
       break;
 
     case READ_FROM_CLIENT_PROXING:
-      printf(log_msg"READ_FROM_CLIENT_PROXING: %d, %d bytes\n", req->client_proxing_fd, cqe->res);
+      printf(log_msg"READ_FROM_CLIENT_PROXING: %d, %d bytes\n", req->target_fd, cqe->res);
       if (cqe->res <= 0)
         printf(log_msg"exit=0, closed client_fd: %d, add_provide_buf: %u\n", req->client_fd, cqe->flags >> IORING_CQE_BUFFER_SHIFT);
+      break;
+    case TIMEOUT:
+      printf(log_msg"TIMEOUT for client_fd: %d, target_fd: %d\n", req->client_fd, req->target_fd);
       break;
   }
 }

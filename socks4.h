@@ -31,6 +31,7 @@ typedef enum {
   WRITE_TO_CLIENT_AFTER_CONNECT=1<<6,
   WRITE_TO_CLIENT_PROXING=1<<7,
   CONNECT=1<<8,
+  TIMEOUT=1<<9,
 } event_type;
 
 #define ALL_EVENT_TYPES \
@@ -42,7 +43,8 @@ typedef enum {
   WRITE_TO_CLIENT| \
   WRITE_TO_CLIENT_AFTER_CONNECT| \
   WRITE_TO_CLIENT_PROXING| \
-  CONNECT
+  CONNECT|\
+  TIMEOUT\
 
 struct socks4_server {
   int server_fd;
@@ -55,12 +57,12 @@ struct socks4_server {
 
 typedef struct {
   int client_fd;
-  int client_proxing_fd;
+  int target_fd;
   event_type state;
   char *send_buf;
   size_t send_len;
   __u16 client_bid;
-  __u16 client_proxing_bid;
+  __u16 target_bid;
 } client_t;
 
 int setup_listening_socket(struct socks4_server *server);

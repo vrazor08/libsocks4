@@ -157,10 +157,10 @@ pub mod libsocks_test {
         let stream = TcpStream::connect(tmp_proxy_addr.as_str()).await.expect("socks4_connect_without_shutdown:TcpStream::connect error");
         stream.set_nodelay(true).unwrap();
         let mut unsafe_stream = ManuallyDrop::new(stream);
-
         unsafe_stream.write(&tmp_connect).await.expect("socks4_connect_without_shutdown:write(socks4_connect) error");
         let n = unsafe_stream.read(read_buf.as_mut_slice()).await.expect("socks4_connect_without_shutdown:read error");
         assert_eq!(n, 8, "socks4_connect_without_shutdown:read len != 8");
+        assert_eq!(read_buf[1], 90, "socks4_connect_without_shutdown:socks4 reply != 90");
       }));
     }
     for handler in handlers { let _ = handler.await; }
@@ -180,14 +180,15 @@ async fn main() {
   let target_port = proxy.port();
   let socks4_connect: Arc<[u8; 8]> = Arc::new([4, 1, (target_port >> 8) as u8, (target_port & 0xFF) as u8, target_ip[0], target_ip[1], target_ip[2], target_ip[3]]);
   match cmd.mode {
-    Subcommands::Test => {
-      let fds_count_before = libsocks_test::socks4_fds_count(cmd.socks_pid);
+    Subcommands::Test {socks_pid, recv_timeout} => {
+      let fds_count_before = libsocks_test::socks4_fds_count(socks_pid);
       libsocks_test::bad_socks4_connect(tmp_proxy_addr.clone(), cmd.concurrent_con).await;
       tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-      assert_eq!(fds_count_before, libsocks_test::socks4_fds_count(cmd.socks_pid), "bad_socks4_connect: fds count != fds_count_before");
+      assert_eq!(fds_count_before, libsocks_test::socks4_fds_count(socks_pid), "bad_socks4_connect: fds count != fds_count_before");
       libsocks_test::socks4_connect_without_shutdown(tmp_proxy_addr.clone(), socks4_connect, cmd.concurrent_con).await;
-      tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-      assert_eq!(fds_count_before, libsocks_test::socks4_fds_count(cmd.socks_pid), "socks4_connect_without_shutdown: fds count != fds_count_before");
+      tokio::time::sleep(tokio::time::Duration::from_millis(recv_timeout + 500)).await;
+      assert_eq!(fds_count_before, libsocks_test::socks4_fds_count(socks_pid), "socks4_connect_without_shutdown: fds count != fds_count_before");
+      println!("All tests was passed!");
     }
     Subcommands::Bench => {
       let mut handlers = Vec::with_capacity(cmd.concurrent_con);
@@ -245,12 +246,29 @@ async fn main() {
 
 #[derive(Clone, Debug, StructOpt)]
 enum Subcommands {
+  #[structopt(name = "bench", about = "Benchmark mode")]
+  /// Benchmark mode
+  ///
+  /// By default sends 10 packets in each of 450 connections
   Bench,
-  Test,
+
+  #[structopt(name = "test", about = "Test mode")]
+  /// Test mode
+  ///
+  /// For each test it uses concurrent 450 connections
+  Test {
+    /// Socks server pid
+    #[structopt(short="p", long)]
+    socks_pid: usize,
+
+    /// Recv timeout in millis
+    #[structopt(short, long, default_value="3000")]
+    recv_timeout: u64
+  },
 }
 
 #[derive(Clone, Debug, StructOpt)]
-#[structopt(name = "libsocks4-test")]
+#[structopt(name = "libsocks4-bench-test")]
 struct Cmd {
   #[structopt(subcommand)]
   mode: Subcommands,
@@ -272,9 +290,4 @@ struct Cmd {
   /// One packet size
   #[structopt(short="P", long, default_value="10")]
   packet_size: usize,
-
-  /// Socks server pid
-  #[structopt(short="p", long)]
-  socks_pid: usize
-
 }
