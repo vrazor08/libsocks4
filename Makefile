@@ -2,7 +2,7 @@ CFLAGS = -O2 -Wall -Wextra -pedantic
 
 default: all
 
-.PHONY: all debug clean
+.PHONY: all debug clean run
 all: build/libsocks4.a build/libsocks4.so debug examples/main
 
 build/:
@@ -23,8 +23,12 @@ build/libsocks4.a: build/socks4.o build/uring_helpers.o
 build/libsocks4.so: build/socks4.o build/uring_helpers.o
 	cc -I. -o build/libsocks4.so build/socks4.o build/uring_helpers.o -shared -fPIC $(CFLAGS)
 
-examples/main: build/libsocks4.a
+examples/main: examples/main.c build/libsocks4.a
 	cc -I. -o examples/main examples/main.c $(CFLAGS) build/libsocks4.a -luring
+
+run: examples/main
+	ulimit -n 4096 && ./examples/main
 
 clean:
 	@rm -f socks4-debug build/*
+	@rm -f examples/main examples/socks4-debug

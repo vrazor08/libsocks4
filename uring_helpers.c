@@ -42,6 +42,12 @@ void add_link_timeout_req(client_t *req, struct __kernel_timespec *ts, struct io
   timeout_req->state = TIMEOUT;
   io_uring_sqe_set_data(timeout_sqe, (void*)timeout_req);
 }
+
+void add_recv_req_with_timeout(int fd, client_t *req, struct __kernel_timespec *ts, struct io_uring *ring) {
+  add_recv_req(fd, req, ring);
+  add_link_timeout_req(req, ts, ring);
+}
+
 void add_provide_buf(struct io_uring_buf_ring *br, char bufs[BUFFERS_COUNT][MAX_MESSAGE_LEN], __u16 bid) {
   io_uring_buf_ring_add(br, bufs[bid], MAX_MESSAGE_LEN, bid, io_uring_buf_ring_mask(BUFFERS_COUNT), 0);
 	io_uring_buf_ring_advance(br, 1);

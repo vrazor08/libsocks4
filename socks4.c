@@ -45,37 +45,44 @@ static inline void prep_sockets(client_t *old_req, client_t *new_req) {
 
 int setup_listening_socket(struct socks4_server* server) {
   int fd = server->server_fd;
-  struct io_uring_params params = {0};
   if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) < 0) close_bail(fd, log_msg"SO_REUSEADDR");
   if (bind(fd, (struct sockaddr *)&server->server_addr, sizeof(server->server_addr)) == -1) close_bail(fd, log_msg"bind");
   if (listen(fd, SOMAXCONN) == -1) close_bail(fd, log_msg"listen");
+  return 0;
+}
+
+int socks4_setup_io_uring_queue(struct socks4_server* server) {
+  struct io_uring_params params = {0};
   params.flags |= IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_CLAMP;
-	params.flags |= IORING_SETUP_COOP_TASKRUN;
-	params.flags |= IORING_SETUP_DEFER_TASKRUN;
+  params.flags |= IORING_SETUP_COOP_TASKRUN;
+  params.flags |= IORING_SETUP_DEFER_TASKRUN;
   int rv = io_uring_queue_init_params(QUEUE_DEPTH, &server->ring, &params);
   if (rv) {
-    fprintf(stderr, "io_uring_queue_init_params: %s\n", strerror(-rv));
-    close(fd);
+    fprintf(stderr, "io_uring_queue_init_params: %s\n", strerror(-rv)); // TODO: return own errno
     return -1;
   }
   struct io_uring_buf_reg reg = { 0 };
-	struct io_uring_buf_ring *br;
-
-	if (posix_memalign((void **) &br, getpagesize(), BUFFERS_COUNT * sizeof(struct io_uring_buf_ring)))
-	  close_bail(fd, log_msg"posix_memalign");
-
-	reg.ring_addr = (unsigned long) br;
-	reg.ring_entries = BUFFERS_COUNT;
-	reg.bgid = GROUP_ID;
-	if (io_uring_register_buf_ring(&server->ring, &reg, 0)) close_bail(fd, log_msg"io_uring_register_buf_ring");
-
-	io_uring_buf_ring_init(br);
-	for (int i = 0; i < BUFFERS_COUNT; i++) {
-		io_uring_buf_ring_add(br, bufs[i], MAX_MESSAGE_LEN, i, io_uring_buf_ring_mask(BUFFERS_COUNT), i);
-	}
-
-	io_uring_buf_ring_advance(br, BUFFERS_COUNT);
-	server->br = br;
+  struct io_uring_buf_ring *br;
+  if (posix_memalign((void **) &br, getpagesize(), BUFFERS_COUNT * sizeof(struct io_uring_buf_ring))) {
+    io_uring_queue_exit(&server->ring);
+    bail(log_msg"posix_memalign");
+  }
+  reg.ring_addr = (unsigned long) br;
+  reg.ring_entries = BUFFERS_COUNT;
+  reg.bgid = GROUP_ID;
+  rv = io_uring_register_buf_ring(&server->ring, &reg, 0);
+  if (rv) {
+    free(br);
+    io_uring_queue_exit(&server->ring);
+    fprintf(stderr, "io_uring_register_buf_ring: %s\n", strerror(-rv));
+    return -1;
+  }
+  io_uring_buf_ring_init(br);
+  for (int i = 0; i < BUFFERS_COUNT; i++) {
+    io_uring_buf_ring_add(br, bufs[i], MAX_MESSAGE_LEN, i, io_uring_buf_ring_mask(BUFFERS_COUNT), i);
+  }
+  io_uring_buf_ring_advance(br, BUFFERS_COUNT);
+  server->br = br;
   return 0;
 }
 
@@ -115,9 +122,6 @@ int handle_cons(struct socks4_server* server, void (*handler)(client_t*, struct 
       req = (client_t*)server->cqe->user_data;
       if (server->cqe->res < 0) {
         // TODO: if for state we have fds - maybe close them. And if we have bids maybe call add_provide_buf
-        // fprintf(stderr, log_msg"%s for event: %s\n", strerror(-server->cqe->res), state_to_str(req->state));
-        // close(req->client_fd);
-        // close(req->target_fd);
         if (req->state == CONNECT) {
           client_req = (client_t*)malloc(sizeof(client_t));
           prep_sockets(req, client_req);
@@ -128,7 +132,7 @@ int handle_cons(struct socks4_server* server, void (*handler)(client_t*, struct 
         // TODO: it's right for recv but not for other events
         } else if (server->cqe->res == -ECANCELED && req->state != TIMEOUT) {
           shutdown(req->client_fd, SHUT_RDWR);
-          shutdown(req->target_fd, SHUT_RDWR);;
+          shutdown(req->target_fd, SHUT_RDWR);
           close(req->client_fd);
           close(req->target_fd);
           fprintf(stderr, log_msg"client_fd: %d, target_fd: %d were closed because recv timeout\n", req->client_fd, req->target_fd);
@@ -158,8 +162,7 @@ int handle_cons(struct socks4_server* server, void (*handler)(client_t*, struct 
           client_req = (client_t*)malloc(sizeof(client_t));
           client_req->client_fd = req->client_fd;
           client_req->state = FIRST_READ;
-          add_recv_req(req->client_fd, client_req, &server->ring);
-          add_link_timeout_req(client_req, server->ts, &server->ring);
+          add_recv_req_with_timeout(req->client_fd, client_req, server->ts, &server->ring);
           break;
         case FIRST_READ:
           if (handler && func_call & FIRST_READ) handler(req, server->cqe);
@@ -223,14 +226,12 @@ int handle_cons(struct socks4_server* server, void (*handler)(client_t*, struct 
           client_req = (client_t*)malloc(sizeof(client_t));
           prep_sockets(req, client_req);
           client_req->state = READ_FROM_CLIENT;
-          add_recv_req(req->client_fd, client_req, &server->ring);
-          add_link_timeout_req(client_req, server->ts, &server->ring);
+          add_recv_req_with_timeout(req->client_fd, client_req, server->ts, &server->ring);
 
           target_req = (client_t*)malloc(sizeof(client_t));
           prep_sockets(req, target_req);
           target_req->state = READ_FROM_CLIENT_PROXING;
-          add_recv_req(req->target_fd, target_req, &server->ring);
-          add_link_timeout_req(target_req, server->ts, &server->ring);
+          add_recv_req_with_timeout(req->target_fd, target_req, server->ts, &server->ring);
 
           free(req);
           break;
@@ -240,8 +241,7 @@ int handle_cons(struct socks4_server* server, void (*handler)(client_t*, struct 
           prep_sockets(req, target_req);
           add_provide_buf(server->br, bufs, req->target_bid);
           target_req->state = READ_FROM_CLIENT_PROXING;
-          add_recv_req(req->target_fd, target_req, &server->ring);
-          add_link_timeout_req(target_req, server->ts, &server->ring);
+          add_recv_req_with_timeout(req->target_fd, target_req, server->ts, &server->ring);
           free(req);
           break;
         case READ_FROM_CLIENT:
@@ -269,8 +269,7 @@ int handle_cons(struct socks4_server* server, void (*handler)(client_t*, struct 
           prep_sockets(req, client_req);
           add_provide_buf(server->br, bufs, req->client_bid);
           client_req->state = READ_FROM_CLIENT;
-          add_recv_req(req->client_fd, client_req, &server->ring);
-          add_link_timeout_req(client_req, server->ts, &server->ring);
+          add_recv_req_with_timeout(req->client_fd, client_req, server->ts, &server->ring);
           free(req);
           break;
         case READ_FROM_CLIENT_PROXING:

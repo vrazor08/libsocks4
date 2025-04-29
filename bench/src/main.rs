@@ -7,12 +7,6 @@ use tokio::net::tcp::{WriteHalf, ReadHalf};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use structopt::StructOpt;
 
-// const PROXY_ADDR: &str = "127.0.0.2:6969";
-// const target_addr: &str = "127.0.0.2:5252";
-// const CONCURRENT_CON: usize = 450;
-// const SENDING_PACKETS_FOR_EACH_CON: usize = 10;
-// const PACKET_SIZE: usize = 10;
-
 async fn safe_write<'a>(
   cur_total_send_pkts: Arc<AtomicU32>,
   cur_total_erros: Arc<AtomicU32>,

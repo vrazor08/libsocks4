@@ -1,5 +1,4 @@
 #include <arpa/inet.h>
-#include <liburing/io_uring.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <sys/socket.h>
@@ -68,6 +67,7 @@ void logger(client_t *req, struct io_uring_cqe *cqe) {
 int main(void) {
   printf(log_msg"starting on: %s:%d\n", host, PORT);
   dbg(puts(log_msg"debug mode is enable"));
+  int rv;
   struct socks4_server server = {0};
   struct sockaddr_in addr = {0};
   struct __kernel_timespec ts = {.tv_sec = 3, .tv_nsec = 0};
@@ -80,12 +80,16 @@ int main(void) {
   if (fd < 0) return 1;
   server.server_fd = fd;
   if (setup_listening_socket(&server) != 0) return 1;
+  if (socks4_setup_io_uring_queue(&server) != 0) {
+    close(server.server_fd);
+    return 1;
+  }
 #ifdef SOCKS_DEBUG
-  if (handle_cons(&server, logger, ALL_EVENT_TYPES) != 0) { close(server.server_fd); return 1; }
+  rv = handle_cons(&server, logger, ALL_EVENT_TYPES);
 #else
-  if (handle_cons(&server, NULL, 0) != 0) { close(server.server_fd); return 1; }
+  rv = handle_cons(&server, NULL, 0);
 #endif
   io_uring_queue_exit(&server.ring);
   close(server.server_fd);
-  return 0;
+  return rv;
 }
