@@ -10,19 +10,20 @@
 const char *host = "127.0.0.2";
 #define PORT 6969
 
-void logger(client_t *req, struct io_uring_cqe *cqe) {
+void logger(client_t *req, struct socks4_server *server) {
   char dst_ip_str[INET_ADDRSTRLEN];
   struct sockaddr_in *proxy_client_dst;
   switch (req->state) {
     case ACCEPT:
       printf(log_msg"accept fd: %d\n", req->client_fd);
+      printf(log_msg"free buffers count: %d\n", io_uring_buf_ring_available(&server->ring, server->br, server->bgid));
       break;
 
     case FIRST_READ:
-      if (cqe->res <= 0)
+      if (server->cqe->res <= 0)
         printf("\n"log_msg"server->cqe->res=0, closed client_fd: %d\n", req->client_fd);
       printf("\n"log_msg"first read from client: %d\n", req->client_fd);
-      printf(log_msg"server->cqe->flags >> IORING_CQE_BUFFER_SHIFT = %u\n", cqe->flags >> IORING_CQE_BUFFER_SHIFT);
+      printf(log_msg"server->cqe->flags >> IORING_CQE_BUFFER_SHIFT = %u\n", server->cqe->flags >> IORING_CQE_BUFFER_SHIFT);
       break;
 
     case CONNECT:
@@ -44,9 +45,9 @@ void logger(client_t *req, struct io_uring_cqe *cqe) {
       break;
 
     case READ_FROM_CLIENT:
-      if (cqe->res <= 0)
-        printf(log_msg"exit=0, closed target_fd: %d, add_provide_buf: %u\n", req->target_fd, cqe->flags >> IORING_CQE_BUFFER_SHIFT);
-      printf(log_msg"READ_FROM_CLIENT: %d, %d bytes\n", req->client_fd, cqe->res);
+      if (server->cqe->res <= 0)
+        printf(log_msg"exit=0, closed target_fd: %d, add_provide_buf: %u\n", req->target_fd, server->cqe->flags >> IORING_CQE_BUFFER_SHIFT);
+      printf(log_msg"READ_FROM_CLIENT: %d, %d bytes\n", req->client_fd, server->cqe->res);
       break;
 
     case WRITE_TO_CLIENT_PROXING:
@@ -54,9 +55,9 @@ void logger(client_t *req, struct io_uring_cqe *cqe) {
       break;
 
     case READ_FROM_CLIENT_PROXING:
-      printf(log_msg"READ_FROM_CLIENT_PROXING: %d, %d bytes\n", req->target_fd, cqe->res);
-      if (cqe->res <= 0)
-        printf(log_msg"exit=0, closed client_fd: %d, add_provide_buf: %u\n", req->client_fd, cqe->flags >> IORING_CQE_BUFFER_SHIFT);
+      printf(log_msg"READ_FROM_CLIENT_PROXING: %d, %d bytes\n", req->target_fd, server->cqe->res);
+      if (server->cqe->res <= 0)
+        printf(log_msg"exit=0, closed client_fd: %d, add_provide_buf: %u\n", req->client_fd, server->cqe->flags >> IORING_CQE_BUFFER_SHIFT);
       break;
     case TIMEOUT:
       printf(log_msg"TIMEOUT for client_fd: %d, target_fd: %d\n", req->client_fd, req->target_fd);
@@ -70,16 +71,24 @@ int main(void) {
   int rv;
   struct socks4_server server = {0};
   struct sockaddr_in addr = {0};
+#ifdef SOCKS_TEST
+  puts(log_msg"test mode is enable");
   struct __kernel_timespec ts = {.tv_sec = 3, .tv_nsec = 0};
+#else
+  struct __kernel_timespec ts = {.tv_sec = 60*3, .tv_nsec = 0};
+#endif
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = inet_addr(host);
   addr.sin_port = htons(PORT);
   server.server_addr = addr;
-  server.ts = &ts;
+  server.recv_timeout = &ts;
   int fd = socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) return 1;
   server.server_fd = fd;
-  if (setup_listening_socket(&server) != 0) return 1;
+  if (setup_listening_socket(&server) != 0) {
+    close(server.server_fd);
+    return 1;
+  }
   if (socks4_setup_io_uring_queue(&server) != 0) {
     close(server.server_fd);
     return 1;

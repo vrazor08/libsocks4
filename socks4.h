@@ -17,7 +17,6 @@
 #define MAX_MESSAGE_LEN 4096
 #define BUFFERS_COUNT   2048
 
-#define GROUP_ID        0
 
 #define ANTOHS(data, i) \
   (((uint16_t)(data)[(i)] << 8) + (uint8_t)(data)[(i) + 1])
@@ -50,10 +49,11 @@ typedef enum {
 struct socks4_server {
   int server_fd;
   struct sockaddr_in server_addr;
-  struct __kernel_timespec *ts;
+  struct __kernel_timespec *recv_timeout;
   struct io_uring ring;
   struct io_uring_buf_ring *br;
   struct io_uring_cqe *cqe;
+  unsigned short bgid;
 };
 
 typedef struct {
@@ -70,6 +70,6 @@ int setup_listening_socket(struct socks4_server *server);
 
 int socks4_setup_io_uring_queue(struct socks4_server* server);
 
-int handle_cons(struct socks4_server *server, void (*handler)(client_t*, struct io_uring_cqe*), event_type handler_call_events);
+int handle_cons(struct socks4_server* server, void (*handler)(client_t*, struct socks4_server*), event_type func_call);
 
 #endif

@@ -9,16 +9,16 @@
 
 void add_accept_req(int fd, client_t *req, struct io_uring *ring);
 
-void add_recv_req(int fd, client_t *req, struct io_uring *ring);
+void add_recv_req(int fd, client_t *req, unsigned short bgid, struct io_uring *ring);
 
 void add_connect_req(client_t *req, struct sockaddr_in *client_dst, socklen_t addr_len, struct io_uring *ring);
 
 void add_send_req(int fd, client_t *req, struct io_uring *ring);
 
+void add_link_timeout_req(client_t *req, struct __kernel_timespec *ts, struct io_uring *ring) __attribute_noinline__;
+
+void add_recv_req_with_timeout(int fd, client_t *req, unsigned short bgid, struct __kernel_timespec *ts, struct io_uring *ring);
+
 void add_provide_buf(struct io_uring_buf_ring *br, char bufs[BUFFERS_COUNT][MAX_MESSAGE_LEN], __u16 bid);
-
-void add_link_timeout_req(client_t *req, struct __kernel_timespec *ts, struct io_uring *ring);
-
-void add_recv_req_with_timeout(int fd, client_t *req, struct __kernel_timespec *ts, struct io_uring *ring);
 
 #endif

@@ -26,8 +26,11 @@ build/libsocks4.so: build/socks4.o build/uring_helpers.o
 examples/main: examples/main.c build/libsocks4.a
 	cc -I. -o examples/main examples/main.c $(CFLAGS) build/libsocks4.a -luring
 
-run: examples/main
-	ulimit -n 4096 && ./examples/main
+examples/test-main: examples/main.c build/libsocks4.a
+	cc -I. -o examples/test-main examples/main.c $(CFLAGS) build/libsocks4.a -DSOCKS_TEST -luring
+
+run: examples/test-main
+	ulimit -n 8192 && ./examples/test-main
 
 clean:
 	@rm -f socks4-debug build/*

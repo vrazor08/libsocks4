@@ -48,7 +48,7 @@ pub mod libsocks_test {
   use std::sync::Arc;
   use std::mem::ManuallyDrop;
   use std::process::Command;
-  use anyhow::Context;
+
   use tokio::net::TcpStream;
   use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -66,76 +66,80 @@ pub mod libsocks_test {
     str_output.trim().parse().expect("parse to i32")
   }
 
-  async fn send_bad_socks4_connect_req(socks4_connect_command: &[u8], proxy_addr: Arc<String>, concurrent_con_for_each: usize, func_name: &str) -> Result<(), anyhow::Error> {
-    let mut read_buf = vec![0u8; 100];
+  async fn send_bad_socks4_connect_req(
+    socks4_connect_command: Arc<[u8]>,
+    proxy_addr: Arc<String>,
+    concurrent_con_for_each: usize,
+    func_name: &'static str
+  ) -> Result<(), tokio::task::JoinError> {
+    let mut read_buf;
+    let mut socks_tmp_connect;
+    let mut tmp_proxy_addr;
+    let mut handlers = Vec::with_capacity(concurrent_con_for_each);
     for _ in 0..concurrent_con_for_each {
-      let mut bad_command_stream = TcpStream::connect(proxy_addr.as_str()).await.context(format!("{func_name}:connect error"))?;
-      bad_command_stream.write(socks4_connect_command).await.context(format!("{func_name}:write error"))?;
-      let n = bad_command_stream.read(read_buf.as_mut_slice()).await.context(format!("{func_name}:read error"))?;
-      if read_buf[..n].cmp(&unsuccess_socks_ans) != Ordering::Equal {
-        anyhow::bail!("ans for socks4_connect_bad_command != unsuccess_socks_ans")
-      }
+      read_buf = vec![0u8; 100];
+      socks_tmp_connect = Arc::clone(&socks4_connect_command);
+      tmp_proxy_addr = Arc::clone(&proxy_addr);
+      handlers.push(tokio::spawn(async move {
+        let mut bad_command_stream = TcpStream::connect(tmp_proxy_addr.as_str()).await.expect(format!("{func_name}:connect error").as_str());
+        bad_command_stream.set_nodelay(true).unwrap();
+        bad_command_stream.write(&socks_tmp_connect).await.expect(format!("{func_name}:write error").as_str());
+        let n = bad_command_stream.read(read_buf.as_mut_slice()).await.expect(format!("{func_name}:read error").as_str());
+        assert_eq!(read_buf[..n].cmp(&unsuccess_socks_ans), Ordering::Equal, "ans for socks4_connect_bad_command != unsuccess_socks_ans");
+      }));
+    }
+    for handler in handlers {
+      handler.await?;
     }
     Ok(())
   }
 
   pub async fn bad_socks4_connect(proxy_addr: Arc<String>, concurrent_con: usize) {
-    let socks4_connect_bad_command: [u8; 8] = [4, 100, 0, 0, 0, 0, 0, 0];
-    let socks4_connect_bad_small_len: [u8; 4] = [4, 1, 0, 0];
-    let socks4_connect_bad_big_len: [u8; 9] = [4, 1, 0, 0, 0, 0, 0, 0, 0];
-    let socks4_connect_bad_very_big_len = [socks4_connect_bad_big_len.as_slice(), &[0u8; 100]].concat();
+    let socks4_connect_bad_command: Arc<[u8; 8]> = Arc::new([4, 100, 0, 0, 0, 0, 0, 0]);
+    let socks4_connect_bad_small_len: Arc<[u8; 4]> = Arc::new([4, 1, 0, 0]);
+    let socks4_connect_bad_big_len: Arc<[u8; 9]> = Arc::new([4, 1, 0, 0, 0, 0, 0, 0, 0]);
+    let mut socks4_connect_bad_very_big_len_arr = [0u8; 109];
+    socks4_connect_bad_very_big_len_arr[..socks4_connect_bad_big_len.len()].copy_from_slice(socks4_connect_bad_big_len.as_ref());
+    let socks4_connect_bad_very_big_len: Arc<[u8]> = Arc::new(socks4_connect_bad_very_big_len_arr);
 
-    let mut handlers = Vec::with_capacity(4);
     let concurrent_con_for_each = concurrent_con / 4;
     let mut cur_proxy_addr;
+    cur_proxy_addr = Arc::clone(&proxy_addr);
+
+    println!("sending socks4_connect_bad_command {concurrent_con_for_each} times");
+    send_bad_socks4_connect_req(
+      socks4_connect_bad_command,
+      cur_proxy_addr,
+      concurrent_con_for_each,
+      "bad_socks4_connect:socks4_connect_bad_small_len"
+    ).await.unwrap();
 
     cur_proxy_addr = Arc::clone(&proxy_addr);
-    handlers.push(tokio::spawn(async move {
-      println!("sending socks4_connect_bad_command {concurrent_con_for_each} times");
-      send_bad_socks4_connect_req(
-        &socks4_connect_bad_command,
-        cur_proxy_addr,
-        concurrent_con_for_each,
-        "bad_socks4_connect:socks4_connect_bad_small_len"
-      ).await.unwrap();
-    }));
+    println!("sending socks4_connect_bad_small_len {concurrent_con_for_each} times");
+    send_bad_socks4_connect_req(
+      socks4_connect_bad_small_len,
+      cur_proxy_addr,
+      concurrent_con_for_each,
+      "bad_socks4_connect:socks4_connect_bad_command"
+    ).await.unwrap();
 
     cur_proxy_addr = Arc::clone(&proxy_addr);
-    handlers.push(tokio::spawn(async move {
-      println!("sending socks4_connect_bad_small_len {concurrent_con_for_each} times");
-      send_bad_socks4_connect_req(
-        &socks4_connect_bad_small_len,
-        cur_proxy_addr,
-        concurrent_con_for_each,
-        "bad_socks4_connect:socks4_connect_bad_command"
-      ).await.unwrap();
-    }));
+    println!("sending socks4_connect_bad_big_len {concurrent_con_for_each} times");
+    send_bad_socks4_connect_req(
+      socks4_connect_bad_big_len,
+      cur_proxy_addr,
+      concurrent_con_for_each,
+      "bad_socks4_connect:socks4_connect_bad_big_len"
+    ).await.unwrap();
 
     cur_proxy_addr = Arc::clone(&proxy_addr);
-    handlers.push(tokio::spawn(async move {
-      println!("sending socks4_connect_bad_big_len {concurrent_con_for_each} times");
-      send_bad_socks4_connect_req(
-        &socks4_connect_bad_big_len,
-        cur_proxy_addr,
-        concurrent_con_for_each,
-        "bad_socks4_connect:socks4_connect_bad_big_len"
-      ).await.unwrap();
-    }));
-
-    cur_proxy_addr = Arc::clone(&proxy_addr);
-    handlers.push(tokio::spawn(async move {
-      println!("sending socks4_connect_bad_very_big_len {concurrent_con_for_each} times");
-      send_bad_socks4_connect_req(
-        &socks4_connect_bad_very_big_len,
-        cur_proxy_addr,
-        concurrent_con_for_each,
-        "bad_socks4_connect:socks4_connect_bad_very_big_len"
-      ).await.unwrap();
-    }));
-
-    for handler in handlers {
-      handler.await.unwrap();
-    }
+    println!("sending socks4_connect_bad_very_big_len {concurrent_con_for_each} times");
+    send_bad_socks4_connect_req(
+      socks4_connect_bad_very_big_len,
+      cur_proxy_addr,
+      concurrent_con_for_each,
+      "bad_socks4_connect:socks4_connect_bad_very_big_len"
+    ).await.unwrap();
   }
 
   pub async fn socks4_connect_without_shutdown(proxy_addr: Arc<String>, socks4_connect: Arc<[u8]>, concurrent_con: usize) {
@@ -157,7 +161,9 @@ pub mod libsocks_test {
         assert_eq!(read_buf[1], 90, "socks4_connect_without_shutdown:socks4 reply != 90");
       }));
     }
-    for handler in handlers { let _ = handler.await; }
+    for handler in handlers {
+      handler.await.unwrap();
+    }
   }
 }
 
@@ -197,7 +203,7 @@ async fn main() {
         tmp_proxy_addr = Arc::clone(&proxy_addr);
         tmp_connect = Arc::clone(&socks4_connect);
         let handler = tokio::spawn(async move {
-          let mut read_buf = vec![0; 1024];
+          let mut read_buf = vec![0; cmd.buf_size];
           let write_data: Vec<u8> = vec![1; i+cmd.packet_size]; // TODO: maybe for debug build send some string
           let mut stream = TcpStream::connect(tmp_proxy_addr.as_str()).await.unwrap();
           stream.set_nodelay(true).unwrap();
@@ -284,4 +290,8 @@ struct Cmd {
   /// One packet size
   #[structopt(short="P", long, default_value="10")]
   packet_size: usize,
+
+  /// Size of recv buffer
+  #[structopt(short, long, default_value="4096")]
+  buf_size: usize
 }

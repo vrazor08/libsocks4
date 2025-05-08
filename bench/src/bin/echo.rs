@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if cfg!(debug_assertions) { println!("Accepted connection from: {client_addr:?}"); }
     stream.set_nodelay(true).unwrap();
     tokio::spawn(async move {
-      let mut buf = vec![0; 1024];
+      let mut buf = vec![0; 4096];
       loop {
         let n = stream.read(&mut buf).await.unwrap();
         if n == 0 {
