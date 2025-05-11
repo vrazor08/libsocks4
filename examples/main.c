@@ -73,15 +73,21 @@ int main(void) {
   struct sockaddr_in addr = {0};
 #ifdef SOCKS_TEST
   puts(log_msg"test mode is enable");
-  struct __kernel_timespec ts = {.tv_sec = 3, .tv_nsec = 0};
+  struct __kernel_timespec recv_ts = {.tv_sec = 3, .tv_nsec = 0};
+  struct __kernel_timespec con_ts =  {.tv_sec = 3, .tv_nsec = 0};
+  struct __kernel_timespec send_ts =  {.tv_sec = 3, .tv_nsec = 0};
 #else
-  struct __kernel_timespec ts = {.tv_sec = 60*3, .tv_nsec = 0};
+  struct __kernel_timespec recv_ts = {.tv_sec = 60*3, .tv_nsec = 0};
+  struct __kernel_timespec con_ts  = {.tv_sec = 60*3, .tv_nsec = 0};
+  struct __kernel_timespec send_ts = {.tv_sec = 60*1, .tv_nsec = 0};
 #endif
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = inet_addr(host);
   addr.sin_port = htons(PORT);
   server.server_addr = addr;
-  server.recv_timeout = &ts;
+  server.recv_timeout = &recv_ts;
+  server.connect_timeout = &con_ts;
+  server.send_timeout = &send_ts;
   int fd = socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) return 1;
   server.server_fd = fd;

@@ -13,6 +13,7 @@
 #include "uring_helpers.h"
 
 static const int yes = 1;
+static const int syn_retries = 1;
 static const char success_socks_ans  [] = {0, 90, 0, 0, 0, 0, 0, 0};
 static const char unsuccess_socks_ans[] = {0, 91, 0, 0, 0, 0, 0, 0};
 
@@ -140,15 +141,24 @@ int handle_cons(struct socks4_server* server, void (*handler)(client_t*, struct 
           client_req->state = WRITE_ERR_TO_CLIENT;
           client_req->send_buf = (char*)unsuccess_socks_ans;
           client_req->send_len = sizeof(unsuccess_socks_ans);
-          add_send_req(req->client_fd, client_req, &server->ring);
+          add_send_req_with_timeout(req->client_fd, client_req, server->send_timeout, &server->ring);
         // TODO: it's right for recv but not for other events
-        } else if (server->cqe->res == -ECANCELED && req->state != TIMEOUT) {
-          close_everything(req->client_fd, req->target_fd);
-          fprintf(stderr, log_msg"client_fd: %d, target_fd: %d were closed because recv timeout\n", req->client_fd, req->target_fd);
+        } else if (req->state == READ_FROM_CLIENT) {
+          close_everything(-1, req->target_fd);
+          fprintf(stderr, log_msg"target_fd: %d was closed because recv error\n", req->target_fd);
+        } else if (req->state == READ_FROM_CLIENT_PROXING) {
+          close_everything(req->client_fd, -1);
+          fprintf(stderr, log_msg"client_fd: %d was closed because recv error\n", req->client_fd);
         } else if ((server->cqe->res == -ETIME || server->cqe->res == -ECANCELED) && req->state == TIMEOUT) {
           goto timeout;
-        } else if (req->state == FIRST_READ || req->state == WRITE_ERR_TO_CLIENT) {
-          close_everything(req->client_fd, -1);
+        } else if (req->state == FIRST_READ) {
+          close(req->client_fd);
+        } else if (req->state == WRITE_ERR_TO_CLIENT) {
+          //close_everything(req->client_fd, req->target_fd);
+          close(req->client_fd);
+          if (req->target_fd > 0) {
+            close(req->target_fd);
+          }
         }
         fprintf(stderr, log_msg"%s for event: %s\n", strerror(-server->cqe->res), state_to_str(req->state));
         fprintf(stderr, log_msg"-server->cqe->res=%d\n", -server->cqe->res);
@@ -177,8 +187,8 @@ int handle_cons(struct socks4_server* server, void (*handler)(client_t*, struct 
           break;
         case FIRST_READ:
           if (handler && func_call & FIRST_READ) handler(req, server);
-          if (!server->cqe->res) {
-            close(req->client_fd);
+          if (server->cqe->res <= 0) {
+            close_everything(req->client_fd, -1);
             free(req);
             break;
           }
@@ -192,7 +202,7 @@ int handle_cons(struct socks4_server* server, void (*handler)(client_t*, struct 
             client_req->target_fd = -1;
             client_req->send_buf = (char*)unsuccess_socks_ans;
             client_req->send_len = sizeof(unsuccess_socks_ans);
-            add_send_req(req->client_fd, client_req, &server->ring);
+            add_send_req_with_timeout(req->client_fd, client_req, server->send_timeout, &server->ring);
             fprintf(stderr, log_msg"handle_client_req == -1, server->cqe->flags >> IORING_CQE_BUFFER_SHIFT = %u\n", server->cqe->flags >> IORING_CQE_BUFFER_SHIFT);
             free(req);
             free(proxy_client_dst);
@@ -204,9 +214,10 @@ int handle_cons(struct socks4_server* server, void (*handler)(client_t*, struct 
           // TODO: don't return
           if (con_fd == -1) bail(log_msg"client socket creation failed");
           if (setsockopt(con_fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(int)) < 0) close_bail(con_fd, log_msg"TCP_NODELAY");
+          if (setsockopt(con_fd, IPPROTO_TCP, TCP_SYNCNT, (char *)&syn_retries, sizeof(syn_retries))) close_bail(con_fd, log_msg"TCP_SYNCNT");
           client_req->target_fd = con_fd;
           client_req->state = CONNECT;
-          add_connect_req(client_req, proxy_client_dst, sizeof(*proxy_client_dst), &server->ring);
+          add_connect_req_with_timeout(client_req, proxy_client_dst, sizeof(*proxy_client_dst), server->connect_timeout, &server->ring);
           free(req);
           break;
         case CONNECT:
@@ -217,7 +228,7 @@ int handle_cons(struct socks4_server* server, void (*handler)(client_t*, struct 
           client_req->send_len = sizeof(success_socks_ans);
           client_req->state = WRITE_TO_CLIENT_AFTER_CONNECT;
           client_req->client_bid = req->client_bid;
-          add_send_req(client_req->client_fd, client_req, &server->ring);
+          add_send_req_with_timeout(client_req->client_fd, client_req, server->send_timeout, &server->ring);
           free(req->send_buf);
           free(req);
           break;
@@ -270,7 +281,7 @@ int handle_cons(struct socks4_server* server, void (*handler)(client_t*, struct 
           client_req->send_buf = bufs[server->cqe->flags >> IORING_CQE_BUFFER_SHIFT];
           client_req->send_len = server->cqe->res;
           client_req->client_bid = server->cqe->flags >> IORING_CQE_BUFFER_SHIFT;
-          add_send_req(client_req->target_fd, client_req, &server->ring);
+          add_send_req_with_timeout(client_req->target_fd, client_req, server->send_timeout, &server->ring);
           free(req);
           break;
         case WRITE_TO_CLIENT_PROXING:
@@ -297,7 +308,7 @@ int handle_cons(struct socks4_server* server, void (*handler)(client_t*, struct 
           client_req->send_len = server->cqe->res;
           client_req->state = WRITE_TO_CLIENT;
           client_req->target_bid = server->cqe->flags >> IORING_CQE_BUFFER_SHIFT;
-          add_send_req(req->client_fd, client_req, &server->ring);
+          add_send_req_with_timeout(req->client_fd, client_req, server->send_timeout, &server->ring);
           free(req);
           break;
         case TIMEOUT:

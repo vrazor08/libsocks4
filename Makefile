@@ -3,7 +3,7 @@ CFLAGS = -O2 -Wall -Wextra -pedantic
 default: all
 
 .PHONY: all debug clean run
-all: build/libsocks4.a build/libsocks4.so debug examples/main
+all: build/libsocks4.a build/libsocks4.so debug examples/main examples/test-main
 
 build/:
 	@mkdir -p build

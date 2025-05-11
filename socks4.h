@@ -14,7 +14,7 @@
 
 // TODO: don't hardcode it
 #define QUEUE_DEPTH     2048
-#define MAX_MESSAGE_LEN 4096
+#define MAX_MESSAGE_LEN 16384
 #define BUFFERS_COUNT   2048
 
 
@@ -50,6 +50,8 @@ struct socks4_server {
   int server_fd;
   struct sockaddr_in server_addr;
   struct __kernel_timespec *recv_timeout;
+  struct __kernel_timespec *send_timeout;
+  struct __kernel_timespec *connect_timeout;
   struct io_uring ring;
   struct io_uring_buf_ring *br;
   struct io_uring_cqe *cqe;
