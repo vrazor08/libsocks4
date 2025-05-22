@@ -47,7 +47,7 @@ pub mod libsocks_test {
   use std::cmp::Ordering;
   use std::sync::Arc;
   use std::mem::ManuallyDrop;
-  use std::process::Command;
+  use std::fs;
 
   use tokio::net::TcpStream;
   use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -55,15 +55,8 @@ pub mod libsocks_test {
   #[allow(non_upper_case_globals)]
   static unsuccess_socks_ans: [u8; 8] = [0, 91, 0, 0, 0, 0, 0, 0];
 
-  pub fn socks4_fds_count(socks_pid: usize) -> i32 {
-    let output = Command::new("bash")
-      .arg("-c")
-      .arg(format!("ls -l /proc/{socks_pid}/fd | awk 'BEGIN {{ sum = -1 }}; {{sum+=1}}; END {{ print sum }}'"))
-      .output()
-      .expect("Failed to get fds number");
-    assert!(output.status.success());
-    let str_output = String::from_utf8(output.stdout).unwrap();
-    str_output.trim().parse().expect("parse to i32")
+  pub fn socks4_fds_count(socks_pid: usize) -> usize {
+    fs::read_dir(format!("/proc/{socks_pid}/fd")).expect("read_dir error").count()
   }
 
   async fn send_bad_socks4_connect_req(
@@ -182,6 +175,7 @@ async fn main() {
   match cmd.mode {
     Subcommands::Test {socks_pid, recv_timeout} => {
       let fds_count_before = libsocks_test::socks4_fds_count(socks_pid);
+      assert_eq!(fds_count_before, 5, "fds_count_before must be 5 for libsocks4");
       libsocks_test::bad_socks4_connect(tmp_proxy_addr.clone(), cmd.concurrent_con).await;
       tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
       assert_eq!(fds_count_before, libsocks_test::socks4_fds_count(socks_pid), "bad_socks4_connect: fds count != fds_count_before");

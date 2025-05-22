@@ -1,4 +1,4 @@
-CFLAGS = -O2 -Wall -Wextra -pedantic
+CFLAGS = -O2 -flto -Wall -Wextra -pedantic
 
 default: all
 
